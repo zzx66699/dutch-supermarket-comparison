@@ -1,10 +1,14 @@
 import requests
 import re
 import time
-import mysql.connector
+import math
+import pandas as pd
 from bs4 import BeautifulSoup
 from datetime import date
 from urllib.parse import urljoin, urlparse
+from deep_translator import GoogleTranslator 
+from supabase import create_client
+
 
 BASE_URL = "https://www.dirk.nl"
 
@@ -65,13 +69,23 @@ HEADERS = {
 }
 
 # Takes a URL string and returns a BeautifulSoup object parsed from that webpage.
-def get_soup(url: str) -> BeautifulSoup: 
-    # Send a GET request to the URL and download the HTML code
-    response = requests.get(url, headers=HEADERS, timeout=10) 
-    # Raise an error if the request failed (e.g., 404 or 500)
-    response.raise_for_status() 
-    # Parse the HTML content into a BeautifulSoup object (DOM tree). Get a text version of html code, and use the "html.parser" to parse and convert into object that beautifulsoup can understand. 
-    return BeautifulSoup(response.text, "html.parser")
+session = requests.Session()
+
+def get_soup(url, max_retries=2, timeout=15, backoff=1):
+    for attempt in range(1, max_retries + 1):
+        try:
+            response = session.get(url, headers=HEADERS, timeout=timeout)
+
+            if response.status_code != 200:
+                return None
+
+            return BeautifulSoup(response.text, "html.parser")
+
+        except Exception as e:
+            return None
+
+    return None
+
 
 # Check if it is a dirk.nl page
 def is_same_domain(url: str) -> bool:
@@ -113,11 +127,8 @@ def crawl_urls(category_urls):
             continue
         visited.add(url)
         
-        # skip the failed page if there're parsing errors, and keep parsing other pages
-        try:
-            soup = get_soup(url)
-        except Exception as e:
-            print(f"Failed: {url}", e)
+        soup = get_soup(url)
+        if soup is None:
             continue
 
         for a in soup.find_all("a", href=True):
@@ -135,15 +146,19 @@ def crawl_urls(category_urls):
 
         time.sleep(0.3)
         
-        # print("finish the " + url)
-        # print(len(product_urls))
+        print("finish the " + url)
+        print(len(product_urls))
 
     return sorted(product_urls)
 
 def parse_product_page(url):
     soup = get_soup(url)
-    # Use a CSS selector to locate the element
-    # A CSS selector is a pattern (or rule) used to select elements in an HTML page — either to style them (in CSS) or to find/extract them (in web scraping with BeautifulSoup).
+    test = 1
+
+    if soup is None:
+        return None
+
+    # Use a CSS selector to locate the element. A CSS selector is a pattern (or rule) used to select elements in an HTML page — either to style them (in CSS) or to find/extract them (in web scraping with BeautifulSoup).
     h1_tag = soup.find("h1")
     unit_tag = soup.find("p", class_="subtitle")
     regular_price_tag = soup.select_one(".regular-price span") #Find an element "span" nested inside an element with class "regular-price"
@@ -153,9 +168,16 @@ def parse_product_page(url):
 
     # Extract the text and strip extra whitespace
     product_name_du = h1_tag.get_text(strip=True) if h1_tag else None
-    unit = unit_tag.get_text(strip=True) if unit_tag else None
+    unit_du = unit_tag.get_text(strip=True) if unit_tag else None
     regular_price = regular_price_tag.get_text(strip=True) if regular_price_tag else None
-    current_price = f"{price_large_tag.get_text(strip=True)}.{price_small_tag.get_text(strip=True)}" if price_large_tag and price_small_tag else f"0.{price_large_tag.get_text(strip=True)}"
+    if price_large_tag: 
+        if price_small_tag:
+            current_price = f"{price_large_tag.get_text(strip=True)}.{price_small_tag.get_text(strip=True)}"  
+        else: 
+            current_price = f"0.{price_large_tag.get_text(strip=True)}"
+    else: 
+        # https://www.dirk.nl/boodschappen/aardappelen-groente-fruit/aardappelen/zoete%20aardappelen/25560, the product or promotion you were looking for is currently unavailable.
+        current_price = None
     # valid_time is a string like "Geldig van woensdag 5 november t/m dinsdag 11 november 2025"
     valid_time = valid_time_tag.get_text(strip=True) if valid_time_tag else None 
 
@@ -179,13 +201,25 @@ def parse_product_page(url):
     return {
     "url": url,
     "product_name_du": product_name_du,
-    "unit": unit,
+    "unit_du": unit_du,
     "regular_price": regular_price,
     "current_price": current_price,
     "valid_from": valid_from,
     "valid_to": valid_to,
     }
 
-for url in crawl_urls(CATEGORY_URLS):
+
+urls = crawl_urls(CATEGORY_URLS)
+products = []
+
+for url in urls:
     product = parse_product_page(url)
-    print(product)
+    if product is None:
+        continue
+    products.append(product)
+
+df = pd.DataFrame(products)
+df['supermarket'] = "dirk"
+    
+df.to_csv("dirk_prices.csv", index=False)
+
