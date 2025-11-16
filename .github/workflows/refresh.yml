@@ -1,27 +1,22 @@
-name: Dirk refresh
+name: Dirk Refresh
 
 on:
-  # For now, let’s keep only manual trigger to test.
-  workflow_dispatch: {}
-
-  # Later you can uncomment this to run on schedule:
+  workflow_dispatch: {}      # allow manual run
+  # Uncomment later when ready to schedule:
   # schedule:
-  #   - cron: "0 1 * * 1-6"  # Mon–Sat 01:00 UTC ≈ 02:00 Amsterdam
-  #   - cron: "0 1 * * 0"    # Sun 01:00 UTC ≈ 02:00 Amsterdam
+  #   - cron: "0 1 * * 1-6"   # Mon–Sat at 01:00 UTC (≈ 02:00 NL)
+  #   - cron: "0 1 * * 0"     # Sun at 01:00 UTC (≈ 02:00 NL)
 
 jobs:
   refresh:
     runs-on: ubuntu-latest
 
     env:
-      SUPABASE_DB_USER: ${{ secrets.SUPABASE_DB_USER }}
-      SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
-      SUPABASE_DB_HOST: ${{ secrets.SUPABASE_DB_HOST }}
-      SUPABASE_DB_PORT: ${{ secrets.SUPABASE_DB_PORT }}
-      SUPABASE_DB_NAME: ${{ secrets.SUPABASE_DB_NAME }}
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
 
     steps:
-      - name: Checkout repository
+      - name: Checkout repo
         uses: actions/checkout@v4
 
       - name: Set up Python
@@ -32,9 +27,9 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          pip install -r requirements.txt
 
       - name: Run refresh script
         run: |
-          echo "Running Dirk refresh script..."
+          echo "Running refresh script..."
           python backend/database_connection.py
