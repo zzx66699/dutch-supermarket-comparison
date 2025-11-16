@@ -25,7 +25,7 @@ url_object = URL.create(
 engine = create_engine(url_object)
 
 # 2. Read your CSV into a DataFrame
-df = pd.read_csv("dirk_data.csv")  # path to your CSV file
+df = pd.read_csv("backend/dirk_data.csv")  # path to your CSV file
 
 # 3. Upload DataFrame to Supabase (Postgres)
 # if_exists="append" → add rows
