@@ -1,0 +1,33 @@
+name: Weekly Refresh
+
+on:
+  workflow_dispatch: {}         # allow manual run
+  schedule:
+    - cron: "0 1 * * 0"         # Sun at 01:00 UTC (≈ 02:00 NL)
+
+jobs:
+  weekly_refresh:
+    runs-on: ubuntu-latest
+
+    env:
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run weekly refresh
+        run: |
+          echo "Running refresh_weekly.py..."
+          python backend/refresh_weekly.py
