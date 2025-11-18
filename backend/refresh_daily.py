@@ -96,11 +96,11 @@ def main():
         print(f"[refresh_daily] Invalid URLs: {invalid_count}")
         print(f"[refresh_daily] Rows with changes: {changed_count}")
 
-        if updates:
-            upsert_rows("dirk_data", updates)
-            print(f"[refresh_daily] Upsert {len(updates)} updated rows to Supabase. ")
-        else:
-            print("[refresh_daily] Nothing to update.")
+    if updates:
+        upsert_rows("dirk_data", updates)
+        print(f"[refresh_daily] Upsert {len(updates)} updated rows to Supabase. ")
+    else:
+        print("[refresh_daily] Nothing to update.")
 
 
 if __name__ == "__main__":
