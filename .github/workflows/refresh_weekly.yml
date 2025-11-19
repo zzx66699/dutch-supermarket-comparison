@@ -3,7 +3,7 @@ name: Weekly Refresh
 on:
   workflow_dispatch: {}         # allow manual run
   schedule:
-    - cron: "0 1 * * 0"         # Sun at 01:00 UTC (≈ 02:00 NL)
+    - cron: "0 1 * * 1"         # Mon at 01:00 UTC (≈ 02:00 NL)
 
 jobs:
   weekly_refresh:
