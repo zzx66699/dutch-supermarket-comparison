@@ -17,7 +17,7 @@ import numpy as np
 
 def main():
     # Crawl all category pages again -> new_urls
-    new_urls = set(crawl_urls(CATEGORY_URLS))
+    new_urls = set(crawl_urls())
     
     # Get the existing data
     supabase = get_supabase()

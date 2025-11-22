@@ -11,17 +11,17 @@ from bs4 import BeautifulSoup
 from deep_translator import GoogleTranslator
 from urllib.parse import urljoin, urlparse
 from datetime import date, datetime
-
+import xml.etree.ElementTree as ET
 
 # ---------------------------------------------------------------------------
 # Basic constants
 # ---------------------------------------------------------------------------
 
-SUPERMARKET = "dirk"
+SUPERMARKET = "Dirk"
 
 BASE_URL = "https://www.dirk.nl"
 
-CATEGORY_URLS = [
+FOOD_PREFIXES = [
     "https://www.dirk.nl/boodschappen/aardappelen-groente-fruit",
     "https://www.dirk.nl/boodschappen/vlees-vis",
     "https://www.dirk.nl/boodschappen/brood-beleg-koek",
@@ -33,17 +33,6 @@ CATEGORY_URLS = [
     "https://www.dirk.nl/boodschappen/snacks-snoep",
 ]
 
-CATEGORY_KEYWORDS = [
-    "aardappelen-groente-fruit",
-    "vlees-vis",
-    "brood-beleg-koek",
-    "zuivel-kaas",
-    "dranken-sap-koffie-thee",
-    "voorraadkast",
-    "maaltijden-salades-tapas",
-    "diepvries",
-    "snacks-snoep",
-]
 
 MONTHS_NL = {
     "januari": 1,
@@ -59,6 +48,9 @@ MONTHS_NL = {
     "november": 11,
     "december": 12,
 }
+
+
+SITEMAP_URL = "https://www.dirk.nl/products-sitemap.xml"
 
 # parse the "Geldig van vrijdag 14 november t/m zondag 16 november 2025"
 VALID_TIME_RE = re.compile(
@@ -102,85 +94,47 @@ def get_soup(url, timeout=10):
         return None
 
 
-def is_same_domain(url: str) -> bool:
-    """
-    True if URL belongs to dirk.nl
-    """
-    # urlparse will return something like this:
-    # ParseResult(scheme='https', netloc='www.dirk.nl', path='/boodschappen/fruit', params='', query='promo=true',fragment='')
-    # We only need the netloc
-    netloc = urlparse(url).netloc
-    return "dirk.nl" in netloc
-
-
-def is_food_related(url: str) -> bool:
-    """
-    True if URL contains any category keyword.
-    """
-    return any(key in url for key in CATEGORY_KEYWORDS)
-
-
-def is_product_url(url: str) -> bool:
-    """
-    True if it is a product page (/boodschappen/.../<id>), where the last segment is digits.
-    """
-    path = urlparse(url).path
-    if "/boodschappen/" not in path:
-        return False
-    # rstrip("/") is to strip the last "/" at the end of the url, like /4538/ -> it will return empty if we don't rstrip.
-    last_seg = path.rstrip("/").split("/")[-1]
-    # if it is digit, then it is a product page
-    return last_seg.isdigit()
-
-
 # ---------------------------------------------------------------------------
 # URL crawler
 # ---------------------------------------------------------------------------
-
-def crawl_urls(category_urls):
+def is_food_product_url(url: str) -> bool:
     """
-    Breadth-first crawl (BFS) starting from Dirk category pages.
-    - Start from the first url in the queue, collects all the links (hrefs) on that page:
-        - If the link is a product page, then adds it to product_urls.
-        - If it's another internal category or pagination page, add it to the queue for later crawling.
-    - Repeats until nothing left in the queue (all pages are visited).
-
-    Returns a sorted list of product URLs.
+    if the URL starts with the food-prefix, then it is a food URL. 
     """
-    visited = set()
-    product_urls = set()
-    queue = deque(category_urls) 
+    if not any(url.startswith(prefix) for prefix in FOOD_PREFIXES):
+        return False
+    last_seg = url.rstrip("/").split("/")[-1]
+    return last_seg.isdigit()
 
-    while queue:
-        # url is the first element in the list, and this element will be deleted from the list
-        url = queue.popleft() 
-        # if we never visit the url before, put it in the "visited" list; we have have visited, skip.
-        if url in visited:
-            continue
-        visited.add(url)
-        
-        soup = get_soup(url)
-        if soup is None:
-            continue
 
-        for a in soup.find_all("a", href=True):
-            # urljoin will automatically check if the url contains the domain
-            full_url = urljoin(BASE_URL, a["href"])
+def crawl_urls(_category_urls=None):
+    """
+    Extract all the food-related urls from the sitemap
+    """
+    try:
+        resp = requests.get(SITEMAP_URL, headers=HEADERS, timeout=30)
+        if resp.status_code != 200:
+            print("Failed to download sitemap:", resp.status_code)
+            return []
 
-            if not is_same_domain(full_url):
-                continue
-            if not is_food_related(full_url):
-                continue
-            if is_product_url(full_url):
-                product_urls.add(full_url)
-            else:
-                if full_url not in visited:
-                    queue.append(full_url)
-        
-        time.sleep(0.2)
-        # print("finish the " + url)
-        # print(len(product_urls))
-    return sorted(product_urls)
+        # Dirk uses standard sitemap namespace
+        NS = {"ns": "http://www.sitemaps.org/schemas/sitemap/0.9"}
+        root = ET.fromstring(resp.text)
+
+        all_urls = []
+        for url_tag in root.findall("ns:url", NS):
+            loc = url_tag.find("ns:loc", NS)
+            if loc is not None and loc.text:
+                all_urls.append(loc.text.strip())
+
+        # Only keep food-related product URLs
+        product_urls = [url for url in all_urls if is_food_product_url(url)]
+
+        return sorted(product_urls)
+
+    except Exception:
+        print("Error parsing sitemap:")
+        return []
 
 
 # ---------------------------------------------------------------------------

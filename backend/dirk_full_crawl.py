@@ -33,7 +33,7 @@ from supabase_utils import upsert_rows
 if __name__ == "__main__":
 
     # 1. Crawl all product URLs
-    urls = crawl_urls(CATEGORY_URLS)
+    urls = crawl_urls()
     print(f"[dirk_full_crawl] Found {len(urls)} product URLs")
 
     # 2. Parse each product page
