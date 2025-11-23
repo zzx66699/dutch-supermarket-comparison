@@ -1,14 +1,12 @@
-name: Dirk Refresh
+name: Daily Refresh
 
 on:
-  workflow_dispatch: {}      # allow manual run
-  # Uncomment later when ready to schedule:
-  # schedule:
-  #   - cron: "0 1 * * 1-6"   # Mon–Sat at 01:00 UTC (≈ 02:00 NL)
-  #   - cron: "0 1 * * 0"     # Sun at 01:00 UTC (≈ 02:00 NL)
+  workflow_dispatch: {}         # allow manual run
+  schedule:
+    - cron: "0 1 * * 2-7"       # Tue–Sun at 01:00 UTC (≈ 02:00 NL)
 
 jobs:
-  refresh:
+  refresh_daily:
     runs-on: ubuntu-latest
 
     env:
@@ -29,7 +27,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Run refresh script
+      - name: Run daily refresh script
         run: |
-          echo "Running refresh script..."
-          python backend/database_connection.py
+          echo "Running refresh_daily.py..."
+          python backend/refresh_daily.py
