@@ -1,6 +1,5 @@
 from dirk_core import (
     SUPERMARKET,
-    CATEGORY_URLS,
     translate_cached,
     crawl_urls,
     parse_unit,
