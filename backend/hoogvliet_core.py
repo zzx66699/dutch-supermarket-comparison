@@ -552,7 +552,7 @@ def build_price_map_for_skus(all_skus, batch_size: int = 80):
 
 
 # ---------------------------------------------------------------------------
-# Lightweight interface for refresh
+# Daily refresh
 # ---------------------------------------------------------------------------
 def refresh_hoogvliet_daily():
     """
@@ -671,10 +671,158 @@ def refresh_hoogvliet_daily():
         return
 
     safe_rows = sanitize_rows(rows_to_update)
-    upsert_rows("hoogvliet_data", safe_rows, pk="url")
+    upsert_rows("hoogvliet_data", safe_rows)
 
     print("[INFO] Hoogvliet daily refresh done.")
 
 
  
 
+# ---------------------------------------------------------------------------
+# Weekly refresh
+# ---------------------------------------------------------------------------
+def refresh_hoogvliet_weekly():
+    """
+    - Fetch full snapshot from Tweakwise + Intershop APIs -> new_products[]
+    - Load all existing rows from Supabase -> old_rows[]
+    - Compare SKU sets:
+           missing_skus = old_skus - new_skus   -> mark availability = false
+           add_skus     = new_skus - old_skus   -> new products, full insert
+           joint_skus   = old_skus ∩ new_skus   -> update price + promotion logic
+    """
+    supabase = get_supabase()
+
+    # 1) Fetch full new snapshot
+    print("[INFO] Fetching full Hoogvliet snapshot via APIs...")
+    new_products = fetch_all_products_with_prices()
+    print(f"[INFO] Snapshot returned {len(new_products)} products")
+
+    # SKU → product mapping
+    new_by_sku = {p["sku"]: p for p in new_products}
+    new_skus = set(new_by_sku.keys())
+
+    # 2) Load old rows from DB
+    resp = supabase.table("hoogvliet_data").select(
+        "url, sku, product_name_du, unit_du, "
+        "regular_price, current_price, availability, "
+        "valid_from, valid_to"
+    ).execute()
+
+    old_rows = resp.data or []
+    print(f"[INFO] Found {len(old_rows)} existing DB rows")
+
+    old_by_sku = {r["sku"]: r for r in old_rows if r.get("sku")}
+    old_skus = set(old_by_sku.keys())
+
+    # 3) Set comparisons
+    missing_skus = old_skus - new_skus
+    add_skus     = new_skus - old_skus
+    joint_skus   = old_skus & new_skus
+
+    rows_to_upsert = []
+
+    # 3.1 Missing = down / unavailable
+    for sku in missing_skus:
+        old = old_by_sku[sku]
+        rows_to_upsert.append({
+            "url": old["url"],
+            "sku": sku,
+            "availability": False,
+            "regular_price": None,
+            "current_price": None,
+            "valid_from": None,
+            "valid_to": None,
+        })
+
+    # 3.2 Joint = update prices + promotion period
+    for sku in joint_skus:
+        old = old_by_sku[sku]
+        new = new_by_sku[sku]
+
+        old_reg = str(old.get("regular_price"))
+        old_cur = str(old.get("current_price"))
+        new_reg = str(new.get("regular_price"))
+        new_cur = str(new.get("current_price"))
+
+        if old_reg == new_reg and old_cur == new_cur:
+            continue  # No change, skip
+
+        valid_from = None
+        valid_to = None
+
+        # Promotion case
+        if new_reg != new_cur:
+            full_url = old["url"]
+            if full_url.startswith("/"):
+                full_url = BASE_URL.rstrip("/") + full_url
+
+            period = parse_product_page(full_url)
+            if period:
+                valid_from = period["valid_from"]
+                valid_to = period["valid_to"]
+
+        rows_to_upsert.append({
+            "url": old["url"],
+            "sku": sku,
+            "availability": True,
+            "regular_price": new["regular_price"],
+            "current_price": new["current_price"],
+            "valid_from": valid_from,
+            "valid_to": valid_to,
+        })
+
+    # 3.3 Add = new products
+    for sku in add_skus:
+        p = new_by_sku[sku]
+
+        reg = p.get("regular_price")
+        cur = p.get("current_price")
+
+        valid_from = None
+        valid_to = None
+
+        if str(reg) != str(cur):
+            full_url = p["url"]
+            if full_url.startswith("/"):
+                full_url = BASE_URL.rstrip("/") + full_url
+
+            period = parse_product_page(full_url)
+            if period:
+                valid_from = period["valid_from"]
+                valid_to = period["valid_to"]
+        
+        product_name_du = p.get("product_name_du")
+        unit_du = p.get("unit_du")
+
+        product_name_en = translate_cached(product_name_du) if product_name_du else None
+
+        unit_qty = None
+        unit_type_en = None
+        if unit_du:
+            unit_qty, unit_type_en = parse_unit(unit_du)
+
+        rows_to_upsert.append(
+            {
+                "sku": sku,
+                "url": p.get("url"),
+                "product_name_du": product_name_du,
+                "product_name_en": product_name_en,  
+                "unit_du": unit_du,
+                "unit_qty": unit_qty,                
+                "unit_type_en": unit_type_en,        
+                "regular_price": reg,
+                "current_price": cur,
+                "valid_from": valid_from,
+                "valid_to": valid_to,
+                "availability": True,
+            }
+        )
+
+    print(f"[INFO] Total rows to upsert: {len(rows_to_upsert)}")
+
+    # 4) Upsert to DB
+    if rows_to_upsert:
+        safe_rows = sanitize_rows(rows_to_upsert)
+        upsert_rows("hoogvliet", safe_rows)
+
+    print("[INFO] Hoogvliet weekly refresh done.")
