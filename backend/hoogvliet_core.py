@@ -1,21 +1,19 @@
 from __future__ import annotations
 import requests
-import gzip
-import xml.etree.ElementTree as ET
 import pandas as pd
 
 
 import re
 import time
-from collections import deque
 from datetime import date
 
 import pandas as pd
 import requests
 from bs4 import BeautifulSoup
 from deep_translator import GoogleTranslator
-from urllib.parse import urljoin, urlparse
 from datetime import date, datetime
+
+from supabase_utils import get_supabase, sanitize_rows, upsert_rows
 
 
 # ---------------------------------------------------------------------------
@@ -45,7 +43,7 @@ MONTHS_NL = {
 # parse helper
 # ---------------------------------------------------------------------------
 
-def parse_unit(attributes):
+def parse_unit_from_attributes(attributes):
     base_unit = None
     ratio = None
     for attr in attributes:
@@ -183,10 +181,11 @@ def fetch_category_items(tn_cid: str, page_size: int = 16):
         #     }
         # ]
         for it in items:
-            base_unit, ratio = parse_unit(it.get("attributes", []))
+            base_unit, ratio = parse_unit_from_attributes(it.get("attributes", []))
             all_items.append(
                 {
                     "sku": it["itemno"],
+                    "brand": it.get("brand"),
                     "title": it["title"],
                     "price": it["price"],
                     "url": it["url"],
@@ -280,7 +279,6 @@ def fetch_products_by_skus(skus):
     resp.raise_for_status()
     data = resp.json()
 
-    # Depending on the exact structure, adapt here.
     # If it's just a list: return data
     # If it's {"products": [...]}, return data["products"]
     if isinstance(data, dict) and "products" in data:
@@ -352,6 +350,7 @@ def fetch_all_products_with_prices():
             {
                 "url": it["url"],
                 "sku": sku,
+                "brand": it["brand"],
                 "product_name_du": it["title"],
                 "unit_du": unit_str,
                 "regular_price": price_info.get("regular_price"),
@@ -427,7 +426,6 @@ def parse_product_page(url):
 # ---------------------------------------------------------------------------
 # Translation
 # ---------------------------------------------------------------------------
-
 translation_cache = {}
 
 def translate_cached(text):
@@ -455,8 +453,6 @@ def translate_cached(text):
 # ---------------------------------------------------------------------------
 # Unit parsing
 # ---------------------------------------------------------------------------
-
-
 def handle_normalized(unit_text): 
     """
     Converts the normalized format of unit (e g. 205 g, 290kg) into (unit_qty, unit_type),
@@ -517,72 +513,6 @@ def parse_unit(unit_text: str):
     
     return(handle_normalized(s))   
 
-
-# ---------------------------------------------------------------------------
-# Lightweight interface for refresh
-# ---------------------------------------------------------------------------
-def fetch_price_snapshot(sku: list):
-    """
-    Thin wrapper for refresh scripts.
-
-    Returns only fields needed for price refresh:
-      - current_price
-      - regular_price
-
-    Returns None if the product page cannot be parsed.
-    """
-
-    # 2. Get pricing info per sku from Intershop
-    price_map = build_price_map(sku)
-
-    # 3. Merge into final structure
-    final_products = []
-
-    for it in sku:
-        sku = it
-        price_info = price_map.get(sku, {})
-
-        unit_str = format_unit(it.get("base_unit"), it.get("ratio"))
-
-        final_products.append(
-            {
-                "url": it["url"],
-                "sku": sku,
-                "product_name_du": it["title"],
-                "unit": unit_str,
-                "regular_price": price_info.get("regular_price"),
-                "current_price": price_info.get("current_price"),
-            }
-        )
-
-    return final_products               
-    
-
- 
-def fetch_sales_snapshot(url: str):
-    soup = get_soup(url)
-    if soup is None:
-        return None
-
-    valid_from = valid_to = None
-
-    valid_time_tag = soup.find("h3", class_="pdp-date-range")
-    valid_time = get_text(valid_time_tag)
-    if valid_time:
-        m = re.search(r"van\s+(\d+)\s+([a-zA-Z]+)\s+t/m\s+(\d+)\s+([a-zA-Z]+)", valid_time)
-        if m:
-            d1, m1, d2, m2 = m.groups()
-
-            year = date.today().year
-
-            valid_from = date(year, MONTHS_NL[m1.lower()], int(d1))
-            valid_to   = date(year, MONTHS_NL[m2.lower()], int(d2))
-
-    return {
-    "valid_from": valid_from,
-    "valid_to": valid_to,
-    }
-
 # ---------------------------------------------------------------------------
 # Normalize the price and date for refresh
 # ---------------------------------------------------------------------------
@@ -608,3 +538,143 @@ def normalize_date(v):
     if isinstance(v, (date, datetime)):
         return v.isoformat()
     return str(v)
+
+
+def build_price_map_for_skus(all_skus, batch_size: int = 80):
+    """
+    build a dict list to use build_price_map
+    build_price_map input format: [ {"sku": "123"}, {"sku": "456"}, {"sku": "789"}, ... ]
+    data format from supabase: ["123", "456", "789", ...]
+    so we build a [ {"sku": "123"}, {"sku": "456"}, {"sku": "789"}, ... ] using dummy_items
+    """
+    dummy_items = [{"sku": s} for s in all_skus]
+    return build_price_map(dummy_items, batch_size=batch_size)
+
+
+# ---------------------------------------------------------------------------
+# Lightweight interface for refresh
+# ---------------------------------------------------------------------------
+def refresh_hoogvliet_daily():
+    """
+    Daily refresh the price and sale period for exsiting URL
+      - Get the data from Supabase 
+      - Using Intershop API to regular_price / current_price
+        - If regular_price is None -> availabilty = False
+        - If regular_price and current_price are unchanged -> skip
+        - regular_price and current_price change 
+            - If regular_price = current_price -> valid_to & valid_from = Null
+            - If regular_price != current_pricecrawl, crawling HTML to update valid_from / valid_to
+        """
+    supabase = get_supabase()
+
+    resp = supabase.table("hoogvliet_data").select(
+        "url, sku, regular_price, current_price, availability, valid_from, valid_to"
+    ).execute()
+    rows = resp.data or []
+
+    if not rows:
+        print("[INFO] hoogvliet_data is empty, nothing to refresh.")
+        return
+
+    print(f"[INFO] found {len(rows)} existing Hoogvliet products in DB")
+
+
+    all_skus = [r["sku"] for r in rows if r.get("sku")]
+    all_skus = list(dict.fromkeys(all_skus))  
+    print(f"[INFO] refreshing prices for {len(all_skus)} SKUs via Intershop API...")
+
+    price_map = build_price_map_for_skus(all_skus)
+
+ 
+    rows_to_update = []
+
+    for r in rows:
+        url = r["url"]
+        sku = r.get("sku")
+
+        # product is invalid
+        if not sku:
+            rows_to_update.append(
+                {
+                    "url": url,
+                    "availability": False,
+                    "regular_price": None,
+                    "current_price": None,
+                    "valid_from": None,
+                    "valid_to": None,
+                }
+            )
+            continue
+
+        price_info = price_map.get(sku)
+
+        if not price_info:
+            rows_to_update.append(
+                {
+                    "url": url,
+                    "availability": False,
+                    "regular_price": None,
+                    "current_price": None,
+                    "valid_from": None,
+                    "valid_to": None,
+                }
+            )
+            continue
+
+        # new price
+        new_reg = price_info["regular_price"]
+        new_cur = price_info["current_price"]
+
+        new_reg_n = normalize_price(new_reg)
+        new_cur_n = normalize_price(new_cur)
+
+        # old price
+        old_reg_n = normalize_price(r.get("regular_price"))
+        old_cur_n = normalize_price(r.get("current_price"))
+
+        # if the price is the same -> skip
+        if new_reg_n == old_reg_n and new_cur_n == old_cur_n:
+            continue
+
+        # if the price changes
+        # no promotion -> valid_from and valid_to are none
+        valid_from = None
+        valid_to = None
+        availability = True  
+
+        # has promotion -> parse valid_from and valid_to
+        if new_reg_n is not None and new_cur_n is not None and new_reg_n != new_cur_n:
+            full_url = url
+            if full_url.startswith("/"):
+                full_url = BASE_URL.rstrip("/") + full_url
+
+            period = parse_product_page(full_url)
+            if period is not None:
+                valid_from = period.get("valid_from")
+                valid_to = period.get("valid_to")
+
+        rows_to_update.append(
+            {
+                "url": url,
+                "availability": availability,
+                "regular_price": new_reg,
+                "current_price": new_cur,
+                "valid_from": valid_from,
+                "valid_to": valid_to,
+            }
+        )
+
+    print(f"[INFO] prepared {len(rows_to_update)} rows to upsert")
+
+    if not rows_to_update:
+        print("[INFO] nothing changed, skip upsert.")
+        return
+
+    safe_rows = sanitize_rows(rows_to_update)
+    upsert_rows("hoogvliet_data", safe_rows, pk="url")
+
+    print("[INFO] Hoogvliet daily refresh done.")
+
+
+ 
+
