@@ -567,7 +567,7 @@ def refresh_hoogvliet_daily():
         """
     supabase = get_supabase()
 
-    resp = supabase.table("hoogvliet_data").select(
+    resp = supabase.table("hoogvliet").select(
         "url, sku, regular_price, current_price, availability, valid_from, valid_to"
     ).execute()
     rows = resp.data or []
