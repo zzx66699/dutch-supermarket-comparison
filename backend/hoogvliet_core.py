@@ -573,7 +573,7 @@ def refresh_hoogvliet_daily():
     rows = resp.data or []
 
     if not rows:
-        print("[INFO] hoogvliet_data is empty, nothing to refresh.")
+        print("[INFO] hoogvliet is empty, nothing to refresh.")
         return
 
     print(f"[INFO] found {len(rows)} existing Hoogvliet products in DB")
@@ -671,7 +671,7 @@ def refresh_hoogvliet_daily():
         return
 
     safe_rows = sanitize_rows(rows_to_update)
-    upsert_rows("hoogvliet_data", safe_rows)
+    upsert_rows("hoogvliet", safe_rows)
 
     print("[INFO] Hoogvliet daily refresh done.")
 
@@ -702,7 +702,7 @@ def refresh_hoogvliet_weekly():
     new_skus = set(new_by_sku.keys())
 
     # 2) Load old rows from DB
-    resp = supabase.table("hoogvliet_data").select(
+    resp = supabase.table("hoogvliet").select(
         "url, sku, product_name_du, unit_du, "
         "regular_price, current_price, availability, "
         "valid_from, valid_to"
