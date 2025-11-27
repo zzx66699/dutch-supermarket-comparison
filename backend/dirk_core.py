@@ -397,6 +397,9 @@ def refresh_dirk_daily():
       - If (curr, reg, vf, vt) unchanged -> skip
       - If changed -> upsert updated fields
     """
+    # -------------------------------------------------------------------
+    # 1. Fetch data from supabase
+    # -------------------------------------------------------------------
     supabase = get_supabase()
 
     resp = supabase.table("dirk").select(
@@ -404,32 +407,47 @@ def refresh_dirk_daily():
     ).execute()
 
     rows = resp.data or []
-    if not rows:
-        print("[dirk_daily] No existing Dirk products in DB, nothing to refresh.")
-        return
-
     print(f"[dirk_daily] Found {len(rows)} Dirk products to refresh.")
-        
+
+
+    # -------------------------------------------------------------------
+    # 2. fetch all dirk products details, using GraphQL
+    # -------------------------------------------------------------------
+    # fresh_products = [
+    # {"sku": 111, "current_price": 1.99, "regular_price": 1.99, ...},
+    # {"sku": 222, "current_price": 2.49, "regular_price": 2.99, ...},
+    # {"sku": 333, "current_price": 3.50, "regular_price": 4.00, ...},
+    # ]
     fresh_products = fetch_all_dirk_products()
     print(f"[INFO] Fresh products fetched: {len(fresh_products)}")
 
+    # fresh_by_pid = {
+    # 111: {"sku": 111, "current_price": 1.99, "regular_price": 1.99, ...},
+    # 222: {"sku": 222, "current_price": 2.49, "regular_price": 2.99, ...},
+    # 333: {"sku": 333, "current_price": 3.50, "regular_price": 4.00, ...},
+    # }   
     fresh_by_pid: Dict[int, Dict[str, Any]] = {
         p["sku"]: p for p in fresh_products if p.get("sku") is not None
     }
 
     updates: List[Dict[str, Any]] = []
 
+
+    # -------------------------------------------------------------------
+    # 3. for each sku in supabase table, check if it is still in the fresh. 
+    #    - not in -> unavailable
+    #    - in -> check the price change
+    # -------------------------------------------------------------------
     for row in rows:
         pid = row.get("sku")
         url = row.get("url")
-        if pid is None or url is None:
-            continue
 
         old_cp = normalize_price(row.get("current_price"))
         old_rp = normalize_price(row.get("regular_price"))
         old_vf = normalize_date(row.get("valid_from"))
         old_vt = normalize_date(row.get("valid_to"))
 
+        # fresh = {"sku": 111, "current_price": 1.99, "regular_price": 1.99, ...}
         fresh = fresh_by_pid.get(pid)
 
         # -------------------------------------------------------------------
@@ -439,21 +457,25 @@ def refresh_dirk_daily():
             if row.get("availability") is not False:
                 updates.append(
                     {
-                        "url": url,
-                        "availability": False,
+                    "sku": pid,        
+                    "url": url,        
+                    "availability": False,
+                    "current_price": None,
+                    "regular_price": None,
+                    "valid_from": None,
+                    "valid_to": None,
                     }
                 )
             continue
-
-
+        
+        # -------------------------------------------------------------------
+        # 2) no change, skip
+        # -------------------------------------------------------------------
         new_cp = normalize_price(fresh.get("current_price"))
         new_rp = normalize_price(fresh.get("regular_price"))
         new_vf = normalize_date(fresh.get("valid_from"))
         new_vt = normalize_date(fresh.get("valid_to"))
 
-        # -------------------------------------------------------------------
-        # 2) no change, skip
-        # -------------------------------------------------------------------
         if (
             new_cp == old_cp
             and new_rp == old_rp
@@ -468,6 +490,7 @@ def refresh_dirk_daily():
         # -------------------------------------------------------------------
         update_row = { 
             "sku": pid,
+            "url": url,
             "current_price": fresh.get("current_price"),
             "regular_price": fresh.get("regular_price"),
             "valid_from": fresh.get("valid_from"),
@@ -601,6 +624,7 @@ def refresh_dirk_weekly():
         rows_to_upsert.append(
             {
                 "sku": sku,
+                "url": old.get("url"),
                 "availability": False,
                 "current_price": None,
                 "regular_price": None,
@@ -637,6 +661,7 @@ def refresh_dirk_weekly():
 
         row = {
             "sku": sku,
+            "url": old.get("url"),
             "regular_price": new.get("regular_price"),
             "current_price": new.get("current_price"),
             "valid_from": new.get("valid_from"),
@@ -655,23 +680,23 @@ def refresh_dirk_weekly():
             print(f"[DIRK WEEKLY][WARN] cannot find URL for new sku={sku}, skip.")
     
 
-    rows_to_upsert.append(
-        {
-            "sku": sku,
-            "url": url,
-            "product_name_du": new.get("product_name_du"),
-            "product_name_en": new.get("product_name_en"),
-            "brand": new.get("brand"),
-            "unit_du": new.get("unit_du"),
-            "unit_qty": new.get("unit_qty"),
-            "unit_type_en": new.get("unit_type_en"),
-            "regular_price": new.get("regular_price"),
-            "current_price": new.get("current_price"),
-            "valid_from": new.get("valid_from"),
-            "valid_to": new.get("valid_to"),
-            "availability": True,
-        }
-    )
+        rows_to_upsert.append(
+            {
+                "sku": sku,
+                "url": url,
+                "product_name_du": new.get("product_name_du"),
+                "product_name_en": new.get("product_name_en"),
+                "brand": new.get("brand"),
+                "unit_du": new.get("unit_du"),
+                "unit_qty": new.get("unit_qty"),
+                "unit_type_en": new.get("unit_type_en"),
+                "regular_price": new.get("regular_price"),
+                "current_price": new.get("current_price"),
+                "valid_from": new.get("valid_from"),
+                "valid_to": new.get("valid_to"),
+                "availability": True,
+            }
+        )
 
     if not rows_to_upsert:
         print("[DIRK WEEKLY] nothing to upsert.")
