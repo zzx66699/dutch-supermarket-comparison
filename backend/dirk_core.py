@@ -422,12 +422,12 @@ def refresh_dirk_daily():
     print(f"[INFO] Fresh products fetched: {len(fresh_products)}")
 
     # fresh_by_pid = {
-    # 111: {"sku": 111, "current_price": 1.99, "regular_price": 1.99, ...},
-    # 222: {"sku": 222, "current_price": 2.49, "regular_price": 2.99, ...},
-    # 333: {"sku": 333, "current_price": 3.50, "regular_price": 4.00, ...},
+    # "111": {"sku": 111, "current_price": 1.99, "regular_price": 1.99, ...},
+    # "222": {"sku": 222, "current_price": 2.49, "regular_price": 2.99, ...},
+    # "333": {"sku": 333, "current_price": 3.50, "regular_price": 4.00, ...},
     # }   
     fresh_by_pid: Dict[int, Dict[str, Any]] = {
-        p["sku"]: p for p in fresh_products if p.get("sku") is not None
+        str(p["sku"]): p for p in fresh_products if p.get("sku") is not None
     }
 
     updates: List[Dict[str, Any]] = []
@@ -460,10 +460,6 @@ def refresh_dirk_daily():
                     "sku": pid,        
                     "url": url,        
                     "availability": False,
-                    "current_price": None,
-                    "regular_price": None,
-                    "valid_from": None,
-                    "valid_to": None,
                     }
                 )
             continue
@@ -516,7 +512,8 @@ def refresh_dirk_daily():
 # ---------------------------------------------------------------------------
 def build_new_dirk_map() -> Dict[str, Dict[str, Any]]:
     """
-    sku (== product_id): {}  dict
+    Get a dic of {sku:{details},sku:{details}}
+    Tranlate and get the product_name_en also.
     """
     products = fetch_all_dirk_products()
     new_by_sku: Dict[str, Dict[str, Any]] = {}
@@ -530,7 +527,12 @@ def build_new_dirk_map() -> Dict[str, Dict[str, Any]]:
 
         name_du = p.get("product_name_du")
         name_en = translate_cached(name_du)
-
+    
+        # new_by_sku = {
+        # "111": {"sku": "111", "current_price": 1.99, "regular_price": 1.99, ...},
+        # "222": {"sku": "222", "current_price": 2.49, "regular_price": 2.99, ...},
+        # "333": {"sku": "333", "current_price": 3.50, "regular_price": 4.00, ...},
+        # } 
         new_by_sku[sku_str] = {
             "sku": sku_str,
             "product_name_du": name_du,
@@ -565,21 +567,24 @@ def build_dirk_url_map() -> Dict[str, str]:
             sku_to_url[sku_str] = url
 
     print(f"[DIRK WEEKLY] built url map for {len(sku_to_url)} SKUs from sitemap")
+
+    # sku_to_url = {
+    # "111": "abc.com",
+    # "222": "edf.com"
+    # }
     return sku_to_url
 
 
 def refresh_dirk_weekly():
     """
-    Weekly refresh（用 sku 做 key）：
-
-      1. GraphQL 获取全量商品 → new_by_sku
-      2. Supabase 读出当前所有 Dirk 行 → old_by_sku
-      3. missing_skus = old_skus - new_skus
-            -> availability = False
-      4. joint_skus = old_skus ∩ new_skus
-            -> 按 daily refresh 逻辑比较 (curr, reg, vf, vt)，有变化再更新
-      5. add_skus = new_skus - old_skus
-            -> 新商品，直接插入（upsert）
+    1. GraphQL 获取全量商品 → new_by_sku
+    2. Supabase 读出当前所有 Dirk 行 → old_by_sku
+    3. missing_skus = old_skus - new_skus
+        -> availability = False
+    4. joint_skus = old_skus ∩ new_skus
+        -> 按 daily refresh 逻辑比较 (curr, reg, vf, vt)，有变化再更新
+    5. add_skus = new_skus - old_skus
+        -> 新商品，直接插入（upsert）
     """
     supabase = get_supabase()
 
