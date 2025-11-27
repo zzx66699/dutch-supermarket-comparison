@@ -1,26 +1,15 @@
-"""
-Refresh A (daily):
-For each existing URL in dirk_data:
-- Fetch current_price, regular_price, valid_from, valid_to
-- If URL invalid => set availability = false
-- Else:
-    - If (curr, reg, vf, vt) unchanged => skip
-    - Else => update those fields (and availability = true)
-"""
-
-
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 
 from hoogvliet_core import refresh_hoogvliet_daily
-# from dirk_core import refresh_dirk_daily_once
+from dirk_core import refresh_dirk_daily
 # from ah_core import refresh_ah_daily_once
 # from jumbo_core import refresh_jumbo_daily_once
 
 
 TASKS = {
     "hoogvliet": refresh_hoogvliet_daily,
-    # "dirk": refresh_dirk_daily_once,
+    "dirk": refresh_dirk_daily,
     # "ah": refresh_ah_daily_once,
     # "jumbo": refresh_jumbo_daily_once,
 }
