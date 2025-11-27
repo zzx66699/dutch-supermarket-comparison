@@ -491,3 +491,157 @@ def refresh_dirk_daily():
 # ---------------------------------------------------------------------------
 # Weekly refresh
 # ---------------------------------------------------------------------------
+def build_new_dirk_map() -> Dict[str, Dict[str, Any]]:
+    """
+    sku (== product_id): {}  dict
+    """
+    products = fetch_all_dirk_products()
+    new_by_sku: Dict[str, Dict[str, Any]] = {}
+
+    for p in products:
+        pid = p.get("product_id")
+        if pid is None:
+            continue
+        sku = str(pid)  # 假设你在表里 sku 是 text
+        new_by_sku[sku] = {
+            "sku": sku,
+            "product_name_du": p.get("product_name_du"),
+            "brand": p.get("brand"),
+            "image_path": p.get("image_path"),
+            "unit_du": p.get("unit_du"),
+            "unit_qty": p.get("unit_qty"),
+            "unit_type_en": p.get("unit_type_en"),
+            "regular_price": p.get("regular_price"),
+            "current_price": p.get("current_price"),
+            "valid_from": p.get("valid_from"),
+            "valid_to": p.get("valid_to"),
+        }
+
+    return new_by_sku
+
+
+def refresh_dirk_weekly():
+    """
+    Weekly refresh（用 sku 做 key）：
+
+      1. GraphQL 获取全量商品 → new_by_sku
+      2. Supabase 读出当前所有 Dirk 行 → old_by_sku
+      3. missing_skus = old_skus - new_skus
+            -> availability = False
+      4. joint_skus = old_skus ∩ new_skus
+            -> 按 daily refresh 逻辑比较 (curr, reg, vf, vt)，有变化再更新
+      5. add_skus = new_skus - old_skus
+            -> 新商品，直接插入（upsert）
+    """
+    supabase = get_supabase()
+
+    resp = supabase.table("dirk").select(
+        "url, sku, regular_price, current_price, valid_from, valid_to, availability"
+    ).execute()
+
+    old_rows = resp.data or []
+    if not old_rows:
+        print("[dirk_daily] No existing Dirk products in DB, nothing to refresh.")
+        return
+
+    old_by_sku: Dict[str, Dict[str, Any]] = {
+        str(r["sku"]): r for r in old_rows if r.get("sku") is not None
+    }
+    old_skus = set(old_by_sku.keys())
+    print(f"[DIRK WEEKLY] existing SKUs: {len(old_skus)}")
+
+    print("[DIRK WEEKLY] Fetch all products via GraphQL...")
+    new_by_sku = build_new_dirk_map()
+    new_skus = set(new_by_sku.keys())
+    print(f"[DIRK WEEKLY] new SKUs from GraphQL: {len(new_skus)}")
+
+    missing_skus = old_skus - new_skus
+    joint_skus = old_skus & new_skus
+    add_skus = new_skus - old_skus
+
+    print(f"[DIRK WEEKLY] missing_skus: {len(missing_skus)}")
+    print(f"[DIRK WEEKLY] joint_skus:   {len(joint_skus)}")
+    print(f"[DIRK WEEKLY] add_skus:     {len(add_skus)}")
+
+    rows_to_upsert: List[Dict[str, Any]] = []
+
+    # ----------------------------------------------------------------------
+    # 1) missing_skus
+    # ----------------------------------------------------------------------
+    for sku in missing_skus:
+        rows_to_upsert.append(
+            {
+                "sku": sku,
+                "availability": False,
+                "current_price": None,
+                "regular_price": None,
+                "valid_from": None,
+                "valid_to": None,
+            }
+        )
+
+    # ----------------------------------------------------------------------
+    # 2) joint_skus:  → daily refresh 逻辑
+    # ----------------------------------------------------------------------
+    for sku in joint_skus:
+        old = old_by_sku[sku]
+        new = new_by_sku[sku]
+
+        old_cp = normalize_price(old.get("current_price"))
+        old_rp = normalize_price(old.get("regular_price"))
+        old_vf = normalize_date(old.get("valid_from"))
+        old_vt = normalize_date(old.get("valid_to"))
+
+        new_cp = normalize_price(new.get("current_price"))
+        new_rp = normalize_price(new.get("regular_price"))
+        new_vf = normalize_date(new.get("valid_from"))
+        new_vt = normalize_date(new.get("valid_to"))
+
+        if (
+            new_cp == old_cp
+            and new_rp == old_rp
+            and new_vf == old_vf
+            and new_vt == old_vt
+            and old.get("availability") is True
+        ):
+            continue
+
+        row = {
+            "sku": sku,
+            "regular_price": new.get("regular_price"),
+            "current_price": new.get("current_price"),
+            "valid_from": new.get("valid_from"),
+            "valid_to": new.get("valid_to"),
+            "availability": True,
+        }
+        rows_to_upsert.append(row)
+
+    # ----------------------------------------------------------------------
+    # 3) add_skus: insert
+    # ----------------------------------------------------------------------
+    for sku in add_skus:
+        new = new_by_sku[sku]
+        row = {
+            "sku": sku,
+            "product_name_du": new.get("product_name_du"),
+            "brand": new.get("brand"),
+            "unit_du": new.get("unit_du"),
+            "unit_qty": new.get("unit_qty"),
+            "unit_type_en": new.get("unit_type_en"),
+            "regular_price": new.get("regular_price"),
+            "current_price": new.get("current_price"),
+            "valid_from": new.get("valid_from"),
+            "valid_to": new.get("valid_to"),
+            "availability": True,
+        }
+        rows_to_upsert.append(row)
+
+    if not rows_to_upsert:
+        print("[DIRK WEEKLY] nothing to upsert.")
+        return
+
+    print(f"[DIRK WEEKLY] upserting {len(rows_to_upsert)} rows to Supabase...")
+
+    supabase.table("dirk").upsert(rows_to_upsert, on_conflict="sku").execute()
+
+    print("[DIRK WEEKLY] done.")
