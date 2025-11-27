@@ -16,19 +16,18 @@ Run this as a one-off or manual script:
 
 import numpy as np
 import pandas as pd
+from supabase_utils import upsert_rows
 
 # When import, Python will load & execute the entire file dirk_core.py first.
 from dirk_core import (
-    SUPERMARKET,
-    CATEGORY_URLS,
+    fetch_all_dirk_products,
     crawl_urls,
-    parse_product_page,
-    translate_cached,
-    parse_unit,
-
+    extract_product_id_from_url,
+    translate_cached
 )
 
-from supabase_utils import upsert_rows 
+from dotenv import load_dotenv
+load_dotenv()
 
 if __name__ == "__main__":
 
@@ -36,27 +35,32 @@ if __name__ == "__main__":
     urls = crawl_urls()
     print(f"[dirk_full_crawl] Found {len(urls)} product URLs")
 
-    # 2. Parse each product page
-    products = []
+    # 2. Get a dataframe of id and url
+    rows = []
     for url in urls:
-        product = parse_product_page(url)
-        # we will add None in the list if soup is None or price_large_tag is None. None will become empty row in df, so we should remove them.
-        if product:
-            products.append(product)
-            
-    df = pd.DataFrame(products)
-    print(f"[dirk_full_crawl] Parsed products: {len(df)} rows")
+        pid = extract_product_id_from_url(url)
+        rows.append({
+            "url": url,
+            "sku": pid,
+        })
 
-    # 3. Add supermarket column
-    df["supermarket"] = SUPERMARKET
+    df_url = pd.DataFrame(rows)
+    print(f"[dirk_full_crawl] df_url: {len(df_url)} rows")
 
-    # 4. Translate product_name_du → product_name_en
-    df["product_name_en"] = df["product_name_du"].apply(translate_cached)
+    # 3. Get product information by GraphQL
+    details = fetch_all_dirk_products()
+    df_details = pd.DataFrame(details)
+    print(f"[dirk_full_crawl] df_details: {len(df_details)} rows")
 
-    # 5. Parse unit strings → unit_qty, unit_type_en
-    df[["unit_qty", "unit_type_en"]] = df["unit_du"].apply(
-        lambda x: pd.Series(parse_unit(x))
+    # 4. Combine
+    df = df_details.merge(
+        df_url,
+        how="left",
+        on="sku"
     )
+
+    # 5. Translate product_name_du → product_name_en
+    df["product_name_en"] = df["product_name_du"].apply(translate_cached)
 
     # 6. Replace ±inf with NaN at DataFrame level (just in case)
     df = df.replace([np.inf, -np.inf], np.nan)
@@ -66,5 +70,5 @@ if __name__ == "__main__":
 
     # 8. Upsert
     print(f"[dirk_full_crawl] Uploading {len(rows)} rows to Supabase...")
-    upsert_rows("dirk_data",rows)
+    upsert_rows("dirk",rows)
 
