@@ -596,7 +596,7 @@ def refresh_hoogvliet_daily():
         if not sku:
             rows_to_update.append(
                 {
-                    "url": url,
+                    "sku": sku,
                     "availability": False,
                     "regular_price": None,
                     "current_price": None,
@@ -611,7 +611,7 @@ def refresh_hoogvliet_daily():
         if not price_info:
             rows_to_update.append(
                 {
-                    "url": url,
+                    "sku": sku,
                     "availability": False,
                     "regular_price": None,
                     "current_price": None,
@@ -655,7 +655,7 @@ def refresh_hoogvliet_daily():
 
         rows_to_update.append(
             {
-                "url": url,
+                "sku": sku,
                 "availability": availability,
                 "regular_price": new_reg,
                 "current_price": new_cur,
@@ -671,7 +671,7 @@ def refresh_hoogvliet_daily():
         return
 
     safe_rows = sanitize_rows(rows_to_update)
-    upsert_rows("hoogvliet", safe_rows)
+    supabase.table("hoogvliet").upsert(safe_rows, on_conflict="sku").execute()
 
     print("[INFO] Hoogvliet daily refresh done.")
 
