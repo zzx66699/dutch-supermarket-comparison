@@ -13,7 +13,6 @@ from urllib.parse import urljoin, urlparse, urlunparse, parse_qs, urlencode
 from datetime import date, datetime 
 import requests
 from bs4 import BeautifulSoup
-from ah_core import get_text 
 import re
 from typing import Optional, Tuple, List
 # ---------------------------------------------------------------------------
@@ -60,17 +59,23 @@ HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
         "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/122.0.0.0 Safari/537.36"
+        "Chrome/124.0.0.0 Safari/537.36"
     ),
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-    "Accept-Language": "nl-NL,nl;q=0.9,en;q=0.8",
+    "Accept": (
+        "text/html,application/xhtml+xml,application/xml;"
+        "q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8"
+    ),
+    "Accept-Language": "nl-NL,nl;q=0.9,en-US;q=0.8,en;q=0.7",
+    "Accept-Encoding": "gzip, deflate, br",
     "Cache-Control": "no-cache",
     "Pragma": "no-cache",
+    "Connection": "keep-alive",
+    "Upgrade-Insecure-Requests": "1",
     "Sec-Fetch-Dest": "document",
     "Sec-Fetch-Mode": "navigate",
-    "Sec-Fetch-Site": "none",
+    "Sec-Fetch-Site": "same-origin",
     "Sec-Fetch-User": "?1",
-    "Upgrade-Insecure-Requests": "1",
+    "Referer": "https://www.ah.nl/producten",  # 模拟从产品列表点进来的
 }
 
 
@@ -292,6 +297,7 @@ def get_current_bonus_period() -> tuple[date, date] | None:
     Use the Bonus page as the source of sales date.
     """
     resp = session.get("https://www.ah.nl/bonus", headers=HEADERS, timeout=10)
+    print(resp.status_code)
     if resp.status_code != 200:
         return None
 
@@ -540,7 +546,6 @@ def parse_ah_product_page(url: str, bonus_period):
     text = soup.get_text("\n", strip=True)
     # break into lines
     lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
-    print (lines)
 
 
     # -----------------------------

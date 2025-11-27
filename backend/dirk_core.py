@@ -499,15 +499,20 @@ def build_new_dirk_map() -> Dict[str, Dict[str, Any]]:
     new_by_sku: Dict[str, Dict[str, Any]] = {}
 
     for p in products:
-        pid = p.get("product_id")
-        if pid is None:
+        sku = p.get("sku")
+        if sku is None:
             continue
-        sku = str(pid)  # 假设你在表里 sku 是 text
-        new_by_sku[sku] = {
-            "sku": sku,
-            "product_name_du": p.get("product_name_du"),
+
+        sku_str = str(sku)
+
+        name_du = p.get("product_name_du")
+        name_en = translate_cached(name_du)
+
+        new_by_sku[sku_str] = {
+            "sku": sku_str,
+            "product_name_du": name_du,
+            "product_name_en": name_en,
             "brand": p.get("brand"),
-            "image_path": p.get("image_path"),
             "unit_du": p.get("unit_du"),
             "unit_qty": p.get("unit_qty"),
             "unit_type_en": p.get("unit_type_en"),
@@ -518,6 +523,26 @@ def build_new_dirk_map() -> Dict[str, Dict[str, Any]]:
         }
 
     return new_by_sku
+
+
+def build_dirk_url_map() -> Dict[str, str]:
+    """
+    sku: url dic
+    """
+    urls = crawl_urls()
+    sku_to_url: Dict[str, str] = {}
+
+    for url in urls:
+        pid = extract_product_id_from_url(url)
+        if pid is None:
+            continue
+        sku_str = str(pid)
+        
+        if sku_str not in sku_to_url:
+            sku_to_url[sku_str] = url
+
+    print(f"[DIRK WEEKLY] built url map for {len(sku_to_url)} SKUs from sitemap")
+    return sku_to_url
 
 
 def refresh_dirk_weekly():
@@ -554,6 +579,10 @@ def refresh_dirk_weekly():
     new_by_sku = build_new_dirk_map()
     new_skus = set(new_by_sku.keys())
     print(f"[DIRK WEEKLY] new SKUs from GraphQL: {len(new_skus)}")
+
+    # - sitemap  sku → url map
+    print("[DIRK WEEKLY] Building sku→url map from sitemap...")
+    sku_to_url = build_dirk_url_map()
 
     missing_skus = old_skus - new_skus
     joint_skus = old_skus & new_skus
@@ -621,9 +650,17 @@ def refresh_dirk_weekly():
     # ----------------------------------------------------------------------
     for sku in add_skus:
         new = new_by_sku[sku]
-        row = {
+        url = sku_to_url.get(sku)
+        if not url:
+            print(f"[DIRK WEEKLY][WARN] cannot find URL for new sku={sku}, skip.")
+    
+
+    rows_to_upsert.append(
+        {
             "sku": sku,
+            "url": url,
             "product_name_du": new.get("product_name_du"),
+            "product_name_en": new.get("product_name_en"),
             "brand": new.get("brand"),
             "unit_du": new.get("unit_du"),
             "unit_qty": new.get("unit_qty"),
@@ -634,7 +671,7 @@ def refresh_dirk_weekly():
             "valid_to": new.get("valid_to"),
             "availability": True,
         }
-        rows_to_upsert.append(row)
+    )
 
     if not rows_to_upsert:
         print("[DIRK WEEKLY] nothing to upsert.")

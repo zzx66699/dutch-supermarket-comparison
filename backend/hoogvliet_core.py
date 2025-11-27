@@ -597,6 +597,7 @@ def refresh_hoogvliet_daily():
             rows_to_update.append(
                 {
                     "sku": sku,
+                    "url": url,
                     "availability": False,
                     "regular_price": None,
                     "current_price": None,
@@ -612,6 +613,7 @@ def refresh_hoogvliet_daily():
             rows_to_update.append(
                 {
                     "sku": sku,
+                    "url": url,
                     "availability": False,
                     "regular_price": None,
                     "current_price": None,
@@ -656,6 +658,7 @@ def refresh_hoogvliet_daily():
         rows_to_update.append(
             {
                 "sku": sku,
+                "url": url,
                 "availability": availability,
                 "regular_price": new_reg,
                 "current_price": new_cur,
@@ -823,6 +826,6 @@ def refresh_hoogvliet_weekly():
     # 4) Upsert to DB
     if rows_to_upsert:
         safe_rows = sanitize_rows(rows_to_upsert)
-        upsert_rows("hoogvliet", safe_rows)
+        supabase.table("hoogvliet").upsert(safe_rows, on_conflict="sku").execute()
 
     print("[INFO] Hoogvliet weekly refresh done.")

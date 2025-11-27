@@ -52,7 +52,12 @@ def sanitize_rows(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     return [{k: sanitize_value(v) for k, v in row.items()} for row in rows]
 
 
-def upsert_rows(table_name: str, rows: List[Dict[str, Any]], batch_size: int = 100):
+
+def upsert_rows(
+    table_name: str,
+    rows: List[Dict[str, Any]],
+    conflict_col: str | None = None,
+):
     """
     upsert = update existing row if the primary key (or unique key) matches, otherwise insert a new row.
     - upsert one row at a time
@@ -65,16 +70,19 @@ def upsert_rows(table_name: str, rows: List[Dict[str, Any]], batch_size: int = 1
 
     supabase = get_supabase()
     safe_rows = sanitize_rows(rows)
-
     total = len(safe_rows)
 
     for idx, row in enumerate(safe_rows, start=1):
         url = row.get("url")
         try:
-            supabase.table(table_name).upsert(row).execute()
+            q = supabase.table(table_name)
+            if conflict_col:
+                q = q.upsert(row, on_conflict=conflict_col)
+            else:
+                q = q.upsert(row)  
+            q.execute()
             print(f"[upsert_rows] OK {idx}/{total} url={url}")
         except Exception as e:
             print(f"[upsert_rows] ❌ Skip {idx}/{total} url={url} due to error: {e}")
 
     print("[upsert_rows] Done.")
-
