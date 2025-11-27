@@ -13,201 +13,8 @@ from urllib.parse import urljoin, urlparse
 from datetime import date, datetime
 import xml.etree.ElementTree as ET
 
-# ---------------------------------------------------------------------------
-# Basic constants
-# ---------------------------------------------------------------------------
-
-SUPERMARKET = "Dirk"
-
-BASE_URL = "https://www.dirk.nl"
-
-FOOD_PREFIXES = [
-    "https://www.dirk.nl/boodschappen/aardappelen-groente-fruit",
-    "https://www.dirk.nl/boodschappen/vlees-vis",
-    "https://www.dirk.nl/boodschappen/brood-beleg-koek",
-    "https://www.dirk.nl/boodschappen/zuivel-kaas",
-    "https://www.dirk.nl/boodschappen/dranken-sap-koffie-thee",
-    "https://www.dirk.nl/boodschappen/voorraadkast",
-    "https://www.dirk.nl/boodschappen/maaltijden-salades-tapas",
-    "https://www.dirk.nl/boodschappen/diepvries",
-    "https://www.dirk.nl/boodschappen/snacks-snoep",
-]
-
-
-MONTHS_NL = {
-    "januari": 1,
-    "februari": 2,
-    "maart": 3,
-    "april": 4,
-    "mei": 5,
-    "juni": 6,
-    "juli": 7,
-    "augustus": 8,
-    "september": 9,
-    "oktober": 10,
-    "november": 11,
-    "december": 12,
-}
-
-
-SITEMAP_URL = "https://www.dirk.nl/products-sitemap.xml"
-
-# parse the "Geldig van vrijdag 14 november t/m zondag 16 november 2025"
-VALID_TIME_RE = re.compile(
-    r"Geldig van\s+\w+\s+(\d{1,2})\s+(\w+)\s+t/m\s+\w+\s+(\d{1,2})\s+(\w+)\s+(\d{4})",
-    flags=re.IGNORECASE,
-)
-
-# HTTP headers: pretend to be a normal browser + add an ethical scraper tag
-HEADERS = {
-    # The first 3 rows make your request look like it’s coming from a real Chrome browser on macOS. Prevents the website from rejecting your request as “bot traffic.”
-    "User-Agent": ( 
-        # Mozilla/5.0 : A legacy compatibility token that all modern browsers include. Max OS: operating system
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) " 
-        # Identifies the browser engine as WebKit.
-        "AppleWebKit/537.36 (KHTML, like Gecko) " 
-        # Specifies the browser version as Chrome 122. 
-        "Chrome/122.0.0.0 Safari/537.36 " 
-        # Custom section — declares this as a “Chrome-compatible scraper” and includes your project URL for transparency. This is considered ethical scraping, because you’re being honest about what’s making the request.
-        "(compatible; dirk-scraper; +https://github.com/dirk-price)" 
-        )
-}
-
-# Reuse a single session for all requests
-session = requests.Session()
-
-
-# ---------------------------------------------------------------------------
-# HTTP / HTML helpers
-# ---------------------------------------------------------------------------
-
-def get_soup(url, timeout=10):
-    """
-    Fetch a URL, return a BeautifulSoup object or return None on error / non-200.
-    """
-    try:
-        response = session.get(url, headers=HEADERS, timeout=timeout)
-        if response.status_code != 200:
-            return None
-        return BeautifulSoup(response.text, "html.parser")
-    except Exception:
-        return None
-
-
-# ---------------------------------------------------------------------------
-# URL crawler
-# ---------------------------------------------------------------------------
-def is_food_product_url(url: str) -> bool:
-    """
-    if the URL starts with the food-prefix, then it is a food URL. 
-    """
-    if not any(url.startswith(prefix) for prefix in FOOD_PREFIXES):
-        return False
-    last_seg = url.rstrip("/").split("/")[-1]
-    return last_seg.isdigit()
-
-
-def crawl_urls(_category_urls=None):
-    """
-    Extract all the food-related urls from the sitemap
-    """
-    try:
-        resp = requests.get(SITEMAP_URL, headers=HEADERS, timeout=30)
-        if resp.status_code != 200:
-            print("Failed to download sitemap:", resp.status_code)
-            return []
-
-        # Dirk uses standard sitemap namespace
-        NS = {"ns": "http://www.sitemaps.org/schemas/sitemap/0.9"}
-        root = ET.fromstring(resp.text)
-
-        all_urls = []
-        for url_tag in root.findall("ns:url", NS):
-            loc = url_tag.find("ns:loc", NS)
-            if loc is not None and loc.text:
-                all_urls.append(loc.text.strip())
-
-        # Only keep food-related product URLs
-        product_urls = [url for url in all_urls if is_food_product_url(url)]
-
-        return sorted(product_urls)
-
-    except Exception:
-        print("Error parsing sitemap:")
-        return []
-
-
-# ---------------------------------------------------------------------------
-# Product page parsing
-# ---------------------------------------------------------------------------
-
-def text(tag):
-    """
-    # Extract the text from the BeautifulSoup object and strip extra whitespace
-    """ 
-    return tag.get_text(strip=True) if tag else None
-
-
-def parse_product_page(url):
-    """
-    Parse a Dirk product page and return a dict with raw fields.
-
-    Returns None if the page cannot be parsed (soup is None) or invalid product (no price).
-    """
-    soup = get_soup(url)
-    if soup is None:
-        return None
-    
-    # Parse the price first because it can quickly skip the invalid product page.
-    price_large_tag = soup.select_one(".price-large")
-    price_small_tag = soup.select_one(".price-small")
-
-    if not price_large_tag: 
-        # No price → invalid product. Example: https://www.dirk.nl/boodschappen/aardappelen-groente-fruit/aardappelen/zoete%20aardappelen/25560, the product or promotion you were looking for is currently unavailable.
-        return None
-    elif price_small_tag:
-        # e.g. "1" + "29" → "1.29"
-        current_price = f"{price_large_tag.get_text(strip=True)}.{price_small_tag.get_text(strip=True)}"  
-    else: 
-        # only cents
-        current_price = f"0.{price_large_tag.get_text(strip=True)}"
-
-
-    h1_tag = soup.find("h1")
-    product_name_du = text(h1_tag)
-
-    unit_tag = soup.find("p", class_="subtitle")
-    unit_du = text(unit_tag)
-
-    #Find an element "span" nested inside an element with class "regular-price"
-    regular_price_tag = soup.select_one(".regular-price span") 
-    regular_price = text(regular_price_tag)
-
-    # e.g. "Geldig van woensdag 5 november t/m dinsdag 11 november 2025"
-    valid_time_tag = soup.select_one(".offer-runtime")
-    valid_time = text(valid_time_tag)
-    valid_from = valid_to = None
-    if valid_time:
-        m = VALID_TIME_RE.search(valid_time)
-        if m:
-            d1, m1, d2, m2, year = m.groups()
-            year = int(year)
-            m1 = MONTHS_NL.get(m1.lower())
-            m2 = MONTHS_NL.get(m2.lower())
-            if m1 and m2:
-                valid_from = date(year, m1, int(d1))
-                valid_to   = date(year, m2, int(d2))
-    
-    return {
-    "url": url,
-    "product_name_du": product_name_du,
-    "unit_du": unit_du,
-    "regular_price": regular_price,
-    "current_price": current_price,
-    "valid_from": valid_from,
-    "valid_to": valid_to,
-    }
-
+from supabase_utils import get_supabase, sanitize_rows, upsert_rows
+from typing import List, Dict, Any
 
 # ---------------------------------------------------------------------------
 # Translation
@@ -239,7 +46,6 @@ def translate_cached(text):
 # ---------------------------------------------------------------------------
 # Unit parsing
 # ---------------------------------------------------------------------------
-
 def handle_normalized(unit_text): 
     """
     Converts the normalized format of unit (e g. 205 g, 290kg) into (unit_qty, unit_type),
@@ -302,59 +108,6 @@ def parse_unit(unit_text: str):
 
 
 # ---------------------------------------------------------------------------
-# Lightweight interface for refresh
-# ---------------------------------------------------------------------------
-def fetch_price_snapshot(url: str):
-    """
-    Thin wrapper for refresh scripts.
-
-    Returns only fields needed for price refresh:
-      - current_price
-      - regular_price
-      - valid_from
-      - valid_to
-
-    Returns None if the product page cannot be parsed.
-    """
-    soup = get_soup(url)
-    if soup is None:
-        return None
-    
-    price_large_tag = soup.select_one(".price-large")
-    price_small_tag = soup.select_one(".price-small")
-
-    if not price_large_tag: 
-        return None
-    elif price_small_tag:
-        current_price = f"{price_large_tag.get_text(strip=True)}.{price_small_tag.get_text(strip=True)}"  
-    else: 
-        current_price = f"0.{price_large_tag.get_text(strip=True)}"
-    
-    regular_price_tag = soup.select_one(".regular-price span") 
-    regular_price = text(regular_price_tag)
-
-    valid_time_tag = soup.select_one(".offer-runtime")
-    valid_time = text(valid_time_tag)
-    valid_from = valid_to = None
-    if valid_time:
-        m = VALID_TIME_RE.search(valid_time)
-        if m:
-            d1, m1, d2, m2, year = m.groups()
-            year = int(year)
-            m1 = MONTHS_NL.get(m1.lower())
-            m2 = MONTHS_NL.get(m2.lower())
-            if m1 and m2:
-                valid_from = date(year, m1, int(d1))
-                valid_to   = date(year, m2, int(d2))
-    
-    return {
-    "regular_price": regular_price,
-    "current_price": current_price,
-    "valid_from": valid_from,
-    "valid_to": valid_to,
-    }
-
-# ---------------------------------------------------------------------------
 # Normalize the price and date for refresh
 # ---------------------------------------------------------------------------
 def normalize_price(v):
@@ -379,3 +132,362 @@ def normalize_date(v):
     if isinstance(v, (date, datetime)):
         return v.isoformat()
     return str(v)
+
+
+# ---------------------------------------------------------------------------
+# Fetch product info using GraphQL
+# ---------------------------------------------------------------------------
+DIRK_GRAPHQL_URL = "https://web-dirk-gateway.detailresult.nl/graphql"
+
+HEADERS = {
+    "User-Agent": "Mozilla/5.0",
+    "Accept": "application/json",
+    "Content-Type": "application/json",
+}
+
+# Check the webgroup_ids manually from the dirk website, the max is 146
+DIRK_WEBGROUP_IDS = list(range(1, 147))  # [1, 2, ..., 146]
+DEFAULT_STORE_ID = 66  
+
+
+def fetch_webgroup_raw(web_group_id: int, store_id: int = DEFAULT_STORE_ID) -> list[dict]:
+    """
+    Using Dirk GraphQL, get all the response from webGroupId
+    It returns a list with element like:
+      {
+        "productId": 21204,
+        "normalPrice": 1.99,
+        "offerPrice": 0.0,
+        "startDate": "...",
+        "endDate": "...",
+        "productOffer": {...} or null,
+        "productInformation": {
+            "productId": 21204,
+            "headerText": "...",
+            "packaging": "400 g",
+            "image": "...",
+            "department": "...",
+            "webgroup": "...",
+            "brand": "...",
+            ...
+        }
+      }
+    """
+    query = f"""
+    query {{
+      listWebGroupProducts(webGroupId: {web_group_id}) {{
+        productAssortment(storeId: {store_id}) {{
+          productId
+          normalPrice
+          offerPrice
+          isSingleUsePlastic
+          singleUsePlasticValue
+          startDate
+          endDate
+          productOffer {{
+            textPriceSign
+            endDate
+            startDate
+            disclaimerStartDate
+            disclaimerEndDate
+          }}
+          productInformation {{
+            productId
+            headerText
+            subText
+            packaging
+            image
+            department
+            webgroup
+            brand
+          }}
+        }}
+      }}
+    }}
+    """.strip()
+
+    payload = {"query": query, "variables": {}}
+
+    resp = requests.post(DIRK_GRAPHQL_URL, headers=HEADERS, json=payload, timeout=15)
+    resp.raise_for_status()
+    data = resp.json()
+
+    assort = (
+        data.get("data", {})
+            .get("listWebGroupProducts", {})
+            .get("productAssortment", [])
+        or []
+    )
+
+    items = [p for p in assort if p is not None]
+    return items
+
+
+def fetch_all_dirk_products(
+    webgroup_ids: list[int] = DIRK_WEBGROUP_IDS,
+    store_id: int = DEFAULT_STORE_ID,
+    sleep_sec: float = 0.2,
+) -> list[dict]:
+    """
+    Scan all the webGroupId, remove deplicates based on productId.
+    """
+    all_by_id: dict[int, dict] = {}
+
+    for gid in webgroup_ids:
+        print(f"\n=== Fetching webGroupId {gid} ===")
+        try:
+            items = fetch_webgroup_raw(gid, store_id=store_id)
+        except Exception as e:
+            print(f"  !! error on gid={gid}: {e}")
+            continue
+
+        print(f"  {len(items)} products in this group")
+
+        for it in items:
+            pid = it.get("productId")
+            if pid is None:
+                continue
+            all_by_id[pid] = it  
+
+        time.sleep(sleep_sec)  
+
+    print(f"\n[INFO] unique products collected: {len(all_by_id)}")
+
+
+    products: list[dict] = []
+    for pid, raw in all_by_id.items():
+        info = raw.get("productInformation") or {}
+        product_name_du = info.get("headerText")
+        offer = raw.get("productOffer") or {}
+
+        normal_price = raw.get("normalPrice")
+        offer_price = raw.get("offerPrice")
+        # Dirk GraphQL: offerPrice = 0 → means NO OFFER
+        if offer_price in (0, 0.0, None):
+            offer_price = normal_price
+        unit_du=  info.get("packaging")
+
+        promo_start = offer.get("startDate") or raw.get("startDate")
+        promo_end = offer.get("endDate") or raw.get("endDate")
+
+        unit_type_en = None
+        if unit_du:
+            unit_qty, unit_type_en = parse_unit(unit_du)
+
+        products.append(
+            {
+                "sku": pid,
+                "product_name_du": product_name_du,
+                "brand": info.get("brand"),
+                "unit_du": unit_du,
+                "unit_qty": unit_qty,
+                "unit_type_en": unit_type_en,
+                "regular_price": normal_price,
+                "current_price": offer_price,
+                "valid_from": promo_start,
+                "valid_to": promo_end,
+                # "department": info.get("department"),
+                # "webgroup": info.get("webgroup"),
+                # "image_path": info.get("image"),
+            }
+        )
+
+    return products
+
+
+# ---------------------------------------------------------------------------
+# Fetch product urls using sitemap
+# ---------------------------------------------------------------------------
+SITEMAP_URL = "https://www.dirk.nl/products-sitemap.xml"
+
+
+# Reuse a single session for all requests
+session = requests.Session()
+
+# ---------------------------------------------------------------------------
+# HTTP / HTML helpers
+# ---------------------------------------------------------------------------
+
+def get_soup(url, timeout=10):
+    """
+    Fetch a URL, return a BeautifulSoup object or return None on error / non-200.
+    """
+    try:
+        response = session.get(url, headers=HEADERS, timeout=timeout)
+        if response.status_code != 200:
+            return None
+        return BeautifulSoup(response.text, "html.parser")
+    except Exception:
+        return None
+
+
+def crawl_urls():
+    """
+    Extract all the food-related urls from the sitemap
+    """
+    try:
+        resp = requests.get(SITEMAP_URL, headers=HEADERS, timeout=30)
+        if resp.status_code != 200:
+            print("Failed to download sitemap:", resp.status_code)
+            return []
+
+        # Dirk uses standard sitemap namespace
+        NS = {"ns": "http://www.sitemaps.org/schemas/sitemap/0.9"}
+        root = ET.fromstring(resp.text)
+
+        all_urls = []
+        for url_tag in root.findall("ns:url", NS):
+            loc = url_tag.find("ns:loc", NS)
+            if loc is not None and loc.text:
+                all_urls.append(loc.text.strip())
+
+        product_urls = [url for url in all_urls]
+
+        return sorted(product_urls)
+
+    except Exception:
+        print("Error parsing sitemap:")
+        return []
+
+
+# ---------------------------------------------------------------------------
+# Extract product id from product url
+# ---------------------------------------------------------------------------
+import re
+from urllib.parse import urlparse
+
+def extract_product_id_from_url(url: str) -> int | None:
+    """
+    Given a Dirk product URL, extract productId from the last path segment.
+    Examples (hypothetical):
+      https://www.dirk.nl/boodschappen/aardappelen/zoete-aardappelfriet-21204  -> 21204
+      https://www.dirk.nl/product/1-de-beste-aardappelen-3-kg-103911          -> 103911
+
+    Returns int productId or None if not found.
+    """
+    try:
+        path = urlparse(url).path  # '/boodschappen/.../zoete-aardappelfriet-21204'
+        last_seg = path.rstrip("/").split("/")[-1]
+        parts = last_seg.split("-")
+
+        # find last all-digit chunk
+        for token in reversed(parts):
+            if token.isdigit():
+                return int(token)
+        # fallback: if whole last segment is digits
+        if last_seg.isdigit():
+            return int(last_seg)
+    except Exception:
+        pass
+
+    print("[WARN] cannot extract productId from URL:", url)
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Daily refresh
+# ---------------------------------------------------------------------------
+def refresh_dirk_daily():
+    """
+    Daily refresh for Dirk:
+
+    For all URLs in the DB:
+      - Crawl the URL and extract: sku, regular_price, current_price, valid_from, valid_to
+      - If invalid: availability -> False 
+      - If (curr, reg, vf, vt) unchanged -> skip
+      - If changed -> upsert updated fields
+    """
+    supabase = get_supabase()
+
+    resp = supabase.table("dirk_data").select(
+        "url, sku, regular_price, current_price, valid_from, valid_to, availability"
+    ).execute()
+
+    rows = resp.data or []
+    if not rows:
+        print("[dirk_daily] No existing Dirk products in DB, nothing to refresh.")
+        return
+
+    print(f"[dirk_daily] Found {len(rows)} Dirk products to refresh.")
+        
+    fresh_products = fetch_all_dirk_products()
+    print(f"[INFO] Fresh products fetched: {len(fresh_products)}")
+
+    fresh_by_pid: Dict[int, Dict[str, Any]] = {
+        p["sku"]: p for p in fresh_products if p.get("sku") is not None
+    }
+
+    updates: List[Dict[str, Any]] = []
+
+    for row in rows:
+        pid = row.get("sku")
+        url = row.get("url")
+        if pid is None or url is None:
+            continue
+
+        old_cp = normalize_price(row.get("current_price"))
+        old_rp = normalize_price(row.get("regular_price"))
+        old_vf = normalize_date(row.get("valid_from"))
+        old_vt = normalize_date(row.get("valid_to"))
+
+        fresh = fresh_by_pid.get(pid)
+
+        # -------------------------------------------------------------------
+        # 1)  can't find productId in GraphQL -> unavailable
+        # -------------------------------------------------------------------
+        if fresh is None:
+            if row.get("availability") is not False:
+                updates.append(
+                    {
+                        "url": url,
+                        "availability": False,
+                    }
+                )
+            continue
+
+
+        new_cp = normalize_price(fresh.get("current_price"))
+        new_rp = normalize_price(fresh.get("regular_price"))
+        new_vf = normalize_date(fresh.get("valid_from"))
+        new_vt = normalize_date(fresh.get("valid_to"))
+
+        # -------------------------------------------------------------------
+        # 2) no change, skip
+        # -------------------------------------------------------------------
+        if (
+            new_cp == old_cp
+            and new_rp == old_rp
+            and new_vf == old_vf
+            and new_vt == old_vt
+            and row.get("availability") is True
+        ):
+            continue
+
+        # -------------------------------------------------------------------
+        # 3) have change, update
+        # -------------------------------------------------------------------
+        update_row = { 
+            "sku": pid,
+            "current_price": fresh.get("current_price"),
+            "regular_price": fresh.get("regular_price"),
+            "valid_from": fresh.get("valid_from"),
+            "valid_to": fresh.get("valid_to"),
+            "availability": True,
+        }
+
+        updates.append(update_row)
+
+    if not updates:
+        print("[INFO] No Dirk rows changed; nothing to update.")
+        return
+
+    print(f"[INFO] Upserting {len(updates)} updated Dirk rows to Supabase...")
+
+    supabase.table("dirk").upsert(updates, on_conflict="sku").execute()
+
+    print("[INFO] Dirk daily refresh done.")
+
+     
+# ---------------------------------------------------------------------------
+# Weekly refresh
+# ---------------------------------------------------------------------------
