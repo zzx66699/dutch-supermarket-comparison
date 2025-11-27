@@ -399,7 +399,7 @@ def refresh_dirk_daily():
     """
     supabase = get_supabase()
 
-    resp = supabase.table("dirk_data").select(
+    resp = supabase.table("dirk").select(
         "url, sku, regular_price, current_price, valid_from, valid_to, availability"
     ).execute()
 
