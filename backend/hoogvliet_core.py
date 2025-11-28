@@ -612,7 +612,7 @@ def refresh_hoogvliet_daily():
     # -------------------------------------------------------------------
     fresh_products = fetch_all_skus()
     
-    fresh_by_pid: Dict[int, Dict[str, Any]] = {
+    fresh_by_pid: Dict[str, Dict[str, Any]] = {
         str(p.get("sku")): p for p in fresh_products if p.get("sku") is not None
     }
 
@@ -624,7 +624,7 @@ def refresh_hoogvliet_daily():
 
     for row in rows:
         url = row.get("url")
-        sku = row.get("sku")
+        sku = str(row.get("sku"))
 
         old_cp = normalize_price(row.get("current_price"))
         old_rp = normalize_price(row.get("regular_price"))
@@ -632,7 +632,8 @@ def refresh_hoogvliet_daily():
         old_vt = normalize_date(row.get("valid_to"))
 
         fresh = fresh_by_pid.get(sku)
-        fresh_time = parse_product_page(url)
+        # fresh_time may be None from html parsing
+        fresh_time = parse_product_page(url) or {}
         # -------------------------------------------------------------------
         # 1) product is invalid
         # -------------------------------------------------------------------

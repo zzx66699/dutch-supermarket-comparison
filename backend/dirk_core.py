@@ -424,7 +424,7 @@ def refresh_dirk_daily():
     # "222": {"sku": 222, "current_price": 2.49, "regular_price": 2.99, ...},
     # "333": {"sku": 333, "current_price": 3.50, "regular_price": 4.00, ...},
     # }   
-    fresh_by_pid: Dict[int, Dict[str, Any]] = {
+    fresh_by_pid: Dict[str, Dict[str, Any]] = {
         str(p["sku"]): p for p in fresh_products if p.get("sku") is not None
     }
 
@@ -437,7 +437,7 @@ def refresh_dirk_daily():
     #    - in -> check the price change
     # -------------------------------------------------------------------
     for row in rows:
-        pid = row.get("sku")
+        pid = str(row.get("sku"))
 
         old_cp = normalize_price(row.get("current_price"))
         old_rp = normalize_price(row.get("regular_price"))
