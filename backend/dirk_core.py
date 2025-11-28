@@ -251,7 +251,7 @@ def fetch_all_dirk_products(
 
         time.sleep(sleep_sec)  
 
-    print(f"\n[INFO] unique products collected: {len(all_by_id)}")
+    print(f"\n[INFO] Dirk new products collected: {len(all_by_id)}")
 
 
     products: list[dict] = []
@@ -417,7 +417,6 @@ def refresh_dirk_daily():
     # {"sku": 333, "current_price": 3.50, "regular_price": 4.00, ...},
     # ]
     fresh_products = fetch_all_dirk_products()
-    print(f"[INFO] Fresh products fetched: {len(fresh_products)}")
 
     # fresh_by_pid = {
     # "111": {"sku": 111, "current_price": 1.99, "regular_price": 1.99, ...},
@@ -428,14 +427,14 @@ def refresh_dirk_daily():
         str(p["sku"]): p for p in fresh_products if p.get("sku") is not None
     }
 
-    updates: List[Dict[str, Any]] = []
-
 
     # -------------------------------------------------------------------
     # 3. for each sku in supabase table, check if it is still in the fresh. 
     #    - not in -> unavailable
     #    - in -> check the price change
     # -------------------------------------------------------------------
+    updates: List[Dict[str, Any]] = []
+
     for row in rows:
         pid = str(row.get("sku"))
 
