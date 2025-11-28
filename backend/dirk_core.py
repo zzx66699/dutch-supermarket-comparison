@@ -401,17 +401,15 @@ def refresh_dirk_daily():
     # 1. Fetch data from supabase
     # -------------------------------------------------------------------
     supabase = get_supabase()
-
     resp = supabase.table("dirk").select(
         "url, sku, regular_price, current_price, valid_from, valid_to, availability"
     ).execute()
-
     rows = resp.data or []
     print(f"[dirk_daily] Found {len(rows)} Dirk products to refresh.")
 
 
     # -------------------------------------------------------------------
-    # 2. fetch all dirk products details, using GraphQL
+    # 2. fetch new dirk products details, using GraphQL
     # -------------------------------------------------------------------
     # fresh_products = [
     # {"sku": 111, "current_price": 1.99, "regular_price": 1.99, ...},
@@ -440,7 +438,6 @@ def refresh_dirk_daily():
     # -------------------------------------------------------------------
     for row in rows:
         pid = row.get("sku")
-        url = row.get("url")
 
         old_cp = normalize_price(row.get("current_price"))
         old_rp = normalize_price(row.get("regular_price"))
@@ -457,8 +454,7 @@ def refresh_dirk_daily():
             if row.get("availability") is not False:
                 updates.append(
                     {
-                    "sku": pid,        
-                    "url": url,        
+                    "sku": pid,     
                     "availability": False,
                     }
                 )
@@ -486,7 +482,6 @@ def refresh_dirk_daily():
         # -------------------------------------------------------------------
         update_row = { 
             "sku": pid,
-            "url": url,
             "current_price": fresh.get("current_price"),
             "regular_price": fresh.get("regular_price"),
             "valid_from": fresh.get("valid_from"),

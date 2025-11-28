@@ -12,8 +12,11 @@ import requests
 from bs4 import BeautifulSoup
 from deep_translator import GoogleTranslator
 from datetime import date, datetime
+from typing import List, Dict, Any
 
-from supabase_utils import get_supabase, sanitize_rows, upsert_rows
+from supabase_utils import get_supabase, sanitize_rows
+
+
 
 
 # ---------------------------------------------------------------------------
@@ -229,7 +232,7 @@ def fetch_all_skus():
         items = fetch_category_items(cid)
         print(f"  category {cid}: {len(items)} items")
         for it in items:
-            # "all_items_by_sku": [
+            # "all_items_by_sku"= [
             #     "727444000": {
             #         "sku": "727444000",
             #         "title": "Bolletjes wit",
@@ -245,6 +248,11 @@ def fetch_all_skus():
             all_items_by_sku[it["sku"]] = it   # dedupe by sku
         time.sleep(0.2)  
 
+    # list(all_items_by_sku.values()) = [
+    #     {"sku": "111", "title": "Milk 1L", "price": "1.25", "url": "/milk", "base_unit": "l", "ratio": "1"},
+    #     {"sku": "222", "title": "Bread",   "price": "2.00", "url": "/bread", "base_unit": "stuk", "ratio": "1"},
+    #     {"sku": "333", "title": "Chocolate","price": "1.50", "url": "/choco", "base_unit": "stuk", "ratio": "1"}
+    # ]
     return list(all_items_by_sku.values())
 
 
@@ -329,7 +337,6 @@ def build_price_map(all_items, batch_size: int = 80):
 # ---------------------------------------------------------------------------
 # Fetch the details for all the skus
 # ---------------------------------------------------------------------------
-
 def fetch_all_products_with_prices():
     # 1. Get all products with sku + title + unit info from Tweakwise
     base_items = fetch_all_skus()
@@ -366,7 +373,6 @@ def fetch_all_products_with_prices():
 # ---------------------------------------------------------------------------
 session = requests.Session()
 
-
 def get_soup(url, timeout=10):
     """
     Fetch a URL, return a BeautifulSoup object or return None on error / non-200.
@@ -383,7 +389,6 @@ def get_soup(url, timeout=10):
 # ---------------------------------------------------------------------------
 # Product page parsing
 # ---------------------------------------------------------------------------
-
 def get_text(tag):
     """
     # Extract the text from the BeautifulSoup object and strip extra whitespace
@@ -565,116 +570,120 @@ def refresh_hoogvliet_daily():
             - If regular_price = current_price -> valid_to & valid_from = Null
             - If regular_price != current_pricecrawl, crawling HTML to update valid_from / valid_to
         """
+    # -------------------------------------------------------------------
+    # 1. Fetch data from supabase 
+    # -------------------------------------------------------------------
     supabase = get_supabase()
-
     resp = supabase.table("hoogvliet").select(
         "url, sku, regular_price, current_price, availability, valid_from, valid_to"
     ).execute()
+    # rows = [
+    #     {
+    #         "url": "https://hoogvliet.com/product/a",
+    #         "sku": "98728000",
+    #         "regular_price": 1.99,
+    #         "current_price": 1.49,
+    #         "availability": True,
+    #         "valid_from": "2025-02-01",
+    #         "valid_to": "2025-02-07",
+    #     },
+    #     {
+    #         "url": "https://hoogvliet.com/product/b",
+    #         "sku": "12345000",
+    #         "regular_price": 2.49,
+    #         "current_price": 2.49,
+    #         "availability": True,
+    #         "valid_from": None,
+    #         "valid_to": None,
+    #     },
+    # ]
     rows = resp.data or []
-
-    if not rows:
-        print("[INFO] hoogvliet is empty, nothing to refresh.")
-        return
-
     print(f"[INFO] found {len(rows)} existing Hoogvliet products in DB")
-
-
-    all_skus = [r["sku"] for r in rows if r.get("sku")]
-    all_skus = list(dict.fromkeys(all_skus))  
+    # -------------------------------------------------------------------
+    # 2. Fetch the exsiting skus and store them into a list
+    # -------------------------------------------------------------------
+    # all_skus = ["98728000","12345000" ]
+    all_skus = [r["sku"] for r in rows]  
     print(f"[INFO] refreshing prices for {len(all_skus)} SKUs via Intershop API...")
 
-    price_map = build_price_map_for_skus(all_skus)
 
- 
-    rows_to_update = []
+    # -------------------------------------------------------------------
+    # 3. Fetch new skus
+    # -------------------------------------------------------------------
+    fresh_products = fetch_all_skus()
+    
+    fresh_by_pid: Dict[int, Dict[str, Any]] = {
+        str(p.get("sku")): p for p in fresh_products if p.get("sku") is not None
+    }
 
-    for r in rows:
-        url = r["url"]
-        sku = r.get("sku")
+    # -------------------------------------------------------------------
+    # 4. Compare the price and make the change
+    # -------------------------------------------------------------------
 
-        # product is invalid
-        if not sku:
-            rows_to_update.append(
+    updates = []
+
+    for row in rows:
+        url = row.get("url")
+        sku = row.get("sku")
+
+        old_cp = normalize_price(row.get("current_price"))
+        old_rp = normalize_price(row.get("regular_price"))
+        old_vf = normalize_date(row.get("valid_from"))
+        old_vt = normalize_date(row.get("valid_to"))
+
+        fresh = fresh_by_pid.get(sku)
+        fresh_time = parse_product_page(url)
+        # -------------------------------------------------------------------
+        # 1) product is invalid
+        # -------------------------------------------------------------------
+        if fresh is None:
+            updates.append(
                 {
                     "sku": sku,
-                    "url": url,
                     "availability": False,
-                    "regular_price": None,
-                    "current_price": None,
-                    "valid_from": None,
-                    "valid_to": None,
                 }
             )
             continue
+        
+        # -------------------------------------------------------------------
+        # 2) No change, skip
+        # -------------------------------------------------------------------
+        new_cp = normalize_price(fresh.get("current_price"))
+        new_rp = normalize_price(fresh.get("regular_price"))
+        new_vf = normalize_date(fresh_time.get("valid_from"))
+        new_vt = normalize_date(fresh_time.get("valid_to"))
 
-        price_info = price_map.get(sku)
-
-        if not price_info:
-            rows_to_update.append(
-                {
-                    "sku": sku,
-                    "url": url,
-                    "availability": False,
-                    "regular_price": None,
-                    "current_price": None,
-                    "valid_from": None,
-                    "valid_to": None,
-                }
-            )
+        if (
+            new_cp == old_cp
+            and new_rp == old_rp
+            and new_vf == old_vf
+            and new_vt == old_vt
+            and row.get("availability") is True
+        ):
             continue
+        
+        # -------------------------------------------------------------------
+        # 3) have change, update
+        # -------------------------------------------------------------------
+        update_row = { 
+            "sku": sku,
+            "current_price": fresh.get("current_price"),
+            "regular_price": fresh.get("regular_price"),
+            "valid_from": fresh_time.get("valid_from"),
+            "valid_to": fresh_time.get("valid_to"),
+            "availability": True,
+        }
 
-        # new price
-        new_reg = price_info["regular_price"]
-        new_cur = price_info["current_price"]
+        updates.append(update_row)
 
-        new_reg_n = normalize_price(new_reg)
-        new_cur_n = normalize_price(new_cur)
 
-        # old price
-        old_reg_n = normalize_price(r.get("regular_price"))
-        old_cur_n = normalize_price(r.get("current_price"))
-
-        # if the price is the same -> skip
-        if new_reg_n == old_reg_n and new_cur_n == old_cur_n:
-            continue
-
-        # if the price changes
-        # no promotion -> valid_from and valid_to are none
-        valid_from = None
-        valid_to = None
-        availability = True  
-
-        # has promotion -> parse valid_from and valid_to
-        if new_reg_n is not None and new_cur_n is not None and new_reg_n != new_cur_n:
-            full_url = url
-            if full_url.startswith("/"):
-                full_url = BASE_URL.rstrip("/") + full_url
-
-            period = parse_product_page(full_url)
-            if period is not None:
-                valid_from = period.get("valid_from")
-                valid_to = period.get("valid_to")
-
-        rows_to_update.append(
-            {
-                "sku": sku,
-                "url": url,
-                "availability": availability,
-                "regular_price": new_reg,
-                "current_price": new_cur,
-                "valid_from": valid_from,
-                "valid_to": valid_to,
-            }
-        )
-
-    print(f"[INFO] prepared {len(rows_to_update)} rows to upsert")
-
-    if not rows_to_update:
+    if not updates:
         print("[INFO] nothing changed, skip upsert.")
         return
 
-    safe_rows = sanitize_rows(rows_to_update)
-    supabase.table("hoogvliet").upsert(safe_rows, on_conflict="sku").execute()
+    print(f"[INFO] Upserting {len(updates)} hoogvliet rows to supabase")
+
+    supabase.table("hoogvliet").upsert(updates, on_conflict="sku").execute()
 
     print("[INFO] Hoogvliet daily refresh done.")
 
@@ -821,7 +830,7 @@ def refresh_hoogvliet_weekly():
             }
         )
 
-    print(f"[INFO] Total rows to upsert: {len(rows_to_upsert)}")
+    print(f"[INFO] Total rows to upsert: {len(updates)}")
 
     # 4) Upsert to DB
     if rows_to_upsert:
