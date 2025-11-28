@@ -402,10 +402,10 @@ def refresh_dirk_daily():
     # -------------------------------------------------------------------
     supabase = get_supabase()
     resp = supabase.table("dirk").select(
-        "url, sku, regular_price, current_price, valid_from, valid_to, availability"
+        "sku, regular_price, current_price, valid_from, valid_to, availability"
     ).execute()
     rows = resp.data or []
-    print(f"[dirk_daily] Found {len(rows)} Dirk products to refresh.")
+    print(f"[dirk_daily] Found {len(rows)} existing Dirk products in DB.")
 
 
     # -------------------------------------------------------------------

@@ -276,21 +276,51 @@ HEADERS_PRODUCTS = {
 
 def fetch_products_by_skus(skus):
     """
-    Call the Intershop API for a *batch* of SKUs.
-    Returns a list/dict of product records.
+    Fetch detailed product information from the Hoogvliet Intershop API for a batch of SKUs.
+
+    Returns list | None
+        - Returns a list of product objects if the API responds with valid JSON.
+          (The list may be empty if none of the requested SKUs are found.)
+        - Returns None if the API request fails, the response body is empty,
+          or the response cannot be decoded as valid JSON.
     """
+    if not skus:
+        return []
+
     params = {
         "products": ",".join(skus)
     }
-    resp = requests.post(API_URL, headers=HEADERS_PRODUCTS,
-                         params=params, timeout=10)
-    resp.raise_for_status()
-    data = resp.json()
 
-    # If it's just a list: return data
-    # If it's {"products": [...]}, return data["products"]
+    resp = requests.post(
+        API_URL,
+        headers=HEADERS_PRODUCTS,
+        params=params,
+        timeout=10,
+    )
+
+    # --- HTTP failure ---
+    try:
+        resp.raise_for_status()
+    except requests.RequestException:
+        print(f"[WARN] Intershop request failed (status={resp.status_code}, batch={len(skus)})")
+        return None
+
+    # --- Empty body ---
+    if not resp.text or not resp.text.strip():
+        print(f"[WARN] Intershop returned empty body (batch={len(skus)})")
+        return None
+
+    # --- JSON decode failure ---
+    try:
+        data = resp.json()
+    except ValueError:
+        print(f"[WARN] Intershop JSON decode failed (status={resp.status_code}, batch={len(skus)})")
+        return None
+
+    # Normal JSON structure
     if isinstance(data, dict) and "products" in data:
         return data["products"]
+
     return data
 
 
@@ -303,7 +333,7 @@ def chunked(iterable, n):
 
 def build_price_map(all_items, batch_size: int = 80):
     """
-    all_items: list from fetch_all_skus()
+    all_items: list from fetch_all_skus() OR dummy_items from build_price_map_for_skus()
     Returns: dict[sku] -> {"regular_price": ..., "current_price": ...}
     """
     price_map = {}
@@ -313,6 +343,10 @@ def build_price_map(all_items, batch_size: int = 80):
         print(f"Fetching prices for batch of {len(chunk)} SKUs...")
         products = fetch_products_by_skus(chunk)
 
+        if products is None:
+            print(f"[WARN] Intershop batch failed for first SKUs: {chunk[:5]}")
+            continue
+
         for p in products:
             sku = p.get("sku") or p.get("itemno")
             if not sku:
@@ -321,8 +355,6 @@ def build_price_map(all_items, batch_size: int = 80):
             list_price = p.get("listPrice")
             discounted = p.get("discountedPrice")
 
-            # If there is no discount, discountedPrice is often equal to / or missing;
-            # we treat listPrice as both regular + current.
             current = discounted if discounted not in (None, "", 0, "0") else list_price
 
             price_map[sku] = {
@@ -331,6 +363,7 @@ def build_price_map(all_items, batch_size: int = 80):
             }
 
     return price_map
+
 
 
 
@@ -599,27 +632,22 @@ def refresh_hoogvliet_daily():
     # ]
     rows = resp.data or []
     print(f"[INFO] found {len(rows)} existing Hoogvliet products in DB")
-    # -------------------------------------------------------------------
-    # 2. Fetch the exsiting skus and store them into a list
-    # -------------------------------------------------------------------
-    # all_skus = ["98728000","12345000" ]
-    all_skus = [r["sku"] for r in rows]  
-    print(f"[INFO] refreshing prices for {len(all_skus)} SKUs via Intershop API...")
 
 
     # -------------------------------------------------------------------
-    # 3. Fetch new skus
+    # 2. Use Intershop API to get fresh prices for *these* SKUs
     # -------------------------------------------------------------------
-    fresh_products = fetch_all_skus()
+    all_skus = [str(r["sku"]) for r in rows if r.get("sku") is not None]
+    # price_map = {
+    # "111": {"regular_price":1, "current_price":0.5},
+    # "222":{"regular_price":1, "current_price":0.5}
+    # }
+    price_map = build_price_map_for_skus(all_skus)   
     
-    fresh_by_pid: Dict[str, Dict[str, Any]] = {
-        str(p.get("sku")): p for p in fresh_products if p.get("sku") is not None
-    }
 
     # -------------------------------------------------------------------
-    # 4. Compare the price and make the change
+    # 3. Compare old vs new, decide updates
     # -------------------------------------------------------------------
-
     updates = []
 
     for row in rows:
@@ -631,13 +659,12 @@ def refresh_hoogvliet_daily():
         old_vf = normalize_date(row.get("valid_from"))
         old_vt = normalize_date(row.get("valid_to"))
 
-        fresh = fresh_by_pid.get(sku)
-        # fresh_time may be None from html parsing
-        fresh_time = parse_product_page(url) or {}
+        price_info = price_map.get(sku)
+
         # -------------------------------------------------------------------
         # 1) product is invalid
         # -------------------------------------------------------------------
-        if fresh is None:
+        if (not price_info) or (price_info.get("regular_price") is None):
             updates.append(
                 {
                     "sku": sku,
@@ -649,10 +676,20 @@ def refresh_hoogvliet_daily():
         # -------------------------------------------------------------------
         # 2) No change, skip
         # -------------------------------------------------------------------
-        new_cp = normalize_price(fresh.get("current_price"))
-        new_rp = normalize_price(fresh.get("regular_price"))
-        new_vf = normalize_date(fresh_time.get("valid_from"))
-        new_vt = normalize_date(fresh_time.get("valid_to"))
+        
+        new_cp = normalize_price(price_info.get("current_price"))
+        new_rp = normalize_price(price_info.get("regular_price"))
+
+        vf_raw = None
+        vt_raw = None
+
+        if new_cp != new_rp:
+            fresh_time = parse_product_page(url) or {}
+            vf_raw = fresh_time.get("valid_from")
+            vt_raw = fresh_time.get("valid_to")
+
+        new_vf = normalize_date(vf_raw)
+        new_vt = normalize_date(vt_raw)
 
         if (
             new_cp == old_cp
@@ -668,10 +705,10 @@ def refresh_hoogvliet_daily():
         # -------------------------------------------------------------------
         update_row = { 
             "sku": sku,
-            "current_price": fresh.get("current_price"),
-            "regular_price": fresh.get("regular_price"),
-            "valid_from": fresh_time.get("valid_from"),
-            "valid_to": fresh_time.get("valid_to"),
+            "current_price": price_info.get("current_price"),
+            "regular_price": price_info.get("regular_price"),
+            "valid_from": new_vf,
+            "valid_to": new_vt,
             "availability": True,
         }
 
