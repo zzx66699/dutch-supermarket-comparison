@@ -2,18 +2,17 @@ from __future__ import annotations
 
 import re
 import time
-from collections import deque
 from datetime import date
 
 import pandas as pd
 import requests
 from bs4 import BeautifulSoup
 from deep_translator import GoogleTranslator
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urlparse
 from datetime import date, datetime
 import xml.etree.ElementTree as ET
 
-from supabase_utils import get_supabase, sanitize_rows, upsert_rows
+from supabase_utils import get_supabase, upsert_rows
 from typing import List, Dict, Any
 
 # ---------------------------------------------------------------------------
@@ -270,9 +269,12 @@ def fetch_all_dirk_products(
         promo_start = offer.get("startDate") or raw.get("startDate")
         promo_end = offer.get("endDate") or raw.get("endDate")
 
+        
+        unit_qty = None
         unit_type_en = None
         if unit_du:
             unit_qty, unit_type_en = parse_unit(unit_du)
+    
 
         products.append(
             {
@@ -323,7 +325,7 @@ def get_soup(url, timeout=10):
 
 def crawl_urls():
     """
-    Extract all the food-related urls from the sitemap
+    Extract all the urls from the sitemap
     """
     try:
         resp = requests.get(SITEMAP_URL, headers=HEADERS, timeout=30)
@@ -405,11 +407,11 @@ def refresh_dirk_daily():
         "sku, regular_price, current_price, valid_from, valid_to, availability"
     ).execute()
     rows = resp.data or []
-    print(f"[dirk_daily] Found {len(rows)} existing Dirk products in DB.")
+    print(f"[Dirk daily] Found {len(rows)} existing Dirk products in DB.")
 
 
     # -------------------------------------------------------------------
-    # 2. fetch new dirk products details, using GraphQL
+    # 2. Fetch new dirk products via GraphQL
     # -------------------------------------------------------------------
     # fresh_products = [
     # {"sku": 111, "current_price": 1.99, "regular_price": 1.99, ...},
@@ -426,7 +428,7 @@ def refresh_dirk_daily():
     fresh_by_pid: Dict[str, Dict[str, Any]] = {
         str(p["sku"]): p for p in fresh_products if p.get("sku") is not None
     }
-
+    
 
     # -------------------------------------------------------------------
     # 3. for each sku in supabase table, check if it is still in the fresh. 
@@ -491,59 +493,19 @@ def refresh_dirk_daily():
         updates.append(update_row)
 
     if not updates:
-        print("[INFO] No Dirk rows changed; nothing to update.")
+        print("[Dirk daily] No Dirk rows changed; nothing to update.")
         return
 
-    print(f"[INFO] Upserting {len(updates)} updated Dirk rows to Supabase...")
+    print(f"[Dirk daily] Upserting {len(updates)} updated Dirk rows to Supabase...")
 
-    supabase.table("dirk").upsert(updates, on_conflict="sku").execute()
+    upsert_rows("dirk", updates, conflict_col="sku")
 
-    print("[INFO] Dirk daily refresh done.")
+    print("[Dirk daily] Done.")
 
      
 # ---------------------------------------------------------------------------
 # Weekly refresh
 # ---------------------------------------------------------------------------
-def build_new_dirk_map() -> Dict[str, Dict[str, Any]]:
-    """
-    Get a dic of {sku:{details},sku:{details}}
-    Tranlate and get the product_name_en also.
-    """
-    products = fetch_all_dirk_products()
-    new_by_sku: Dict[str, Dict[str, Any]] = {}
-
-    for p in products:
-        sku = p.get("sku")
-        if sku is None:
-            continue
-
-        sku_str = str(sku)
-
-        name_du = p.get("product_name_du")
-        name_en = translate_cached(name_du)
-    
-        # new_by_sku = {
-        # "111": {"sku": "111", "current_price": 1.99, "regular_price": 1.99, ...},
-        # "222": {"sku": "222", "current_price": 2.49, "regular_price": 2.99, ...},
-        # "333": {"sku": "333", "current_price": 3.50, "regular_price": 4.00, ...},
-        # } 
-        new_by_sku[sku_str] = {
-            "sku": sku_str,
-            "product_name_du": name_du,
-            "product_name_en": name_en,
-            "brand": p.get("brand"),
-            "unit_du": p.get("unit_du"),
-            "unit_qty": p.get("unit_qty"),
-            "unit_type_en": p.get("unit_type_en"),
-            "regular_price": p.get("regular_price"),
-            "current_price": p.get("current_price"),
-            "valid_from": p.get("valid_from"),
-            "valid_to": p.get("valid_to"),
-        }
-
-    return new_by_sku
-
-
 def build_dirk_url_map() -> Dict[str, str]:
     """
     sku: url dic
@@ -560,80 +522,81 @@ def build_dirk_url_map() -> Dict[str, str]:
         if sku_str not in sku_to_url:
             sku_to_url[sku_str] = url
 
-    print(f"[DIRK WEEKLY] built url map for {len(sku_to_url)} SKUs from sitemap")
+    print(f"[Dirk weekly] built url map for {len(sku_to_url)} SKUs from sitemap")
 
-    # sku_to_url = {
-    # "111": "abc.com",
-    # "222": "edf.com"
-    # }
     return sku_to_url
 
 
 def refresh_dirk_weekly():
     """
-    1. GraphQL 获取全量商品 → new_by_sku
-    2. Supabase 读出当前所有 Dirk 行 → old_by_sku
+    1. Use GraphQL to parse all products → new_by_sku
+    2. Supabase DB → old_by_sku
     3. missing_skus = old_skus - new_skus
         -> availability = False
-    4. joint_skus = old_skus ∩ new_skus
-        -> 按 daily refresh 逻辑比较 (curr, reg, vf, vt)，有变化再更新
-    5. add_skus = new_skus - old_skus
-        -> 新商品，直接插入（upsert）
+    4. joint_skus = old_skus ∩ new_skus 
+        -> same as daily refresh
+    5. add_skus = new_skus - old_skus 
+        -> upsert
     """
+    # -------------------------------------------------------------------
+    # 1. Fetch data from supabase
+    # -------------------------------------------------------------------
     supabase = get_supabase()
-
     resp = supabase.table("dirk").select(
         "url, sku, regular_price, current_price, valid_from, valid_to, availability"
     ).execute()
-
     old_rows = resp.data or []
-    if not old_rows:
-        print("[dirk_daily] No existing Dirk products in DB, nothing to refresh.")
-        return
-
-    old_by_sku: Dict[str, Dict[str, Any]] = {
-        str(r["sku"]): r for r in old_rows if r.get("sku") is not None
-    }
+    old_by_sku = {str(r["sku"]): r for r in old_rows if r.get("sku")}
     old_skus = set(old_by_sku.keys())
-    print(f"[DIRK WEEKLY] existing SKUs: {len(old_skus)}")
+    print(f"[Dirk weekly] Found {len(old_skus)} existing dirk products in DB.")
 
-    print("[DIRK WEEKLY] Fetch all products via GraphQL...")
-    new_by_sku = build_new_dirk_map()
+
+    # -------------------------------------------------------------------
+    # 2. Fetch new dirk products via GraphQL
+    # -------------------------------------------------------------------
+    fresh_products = fetch_all_dirk_products()
+    new_by_sku: Dict[str, Dict[str, Any]] = {
+        str(p["sku"]): p for p in fresh_products if p.get("sku") is not None
+    }
     new_skus = set(new_by_sku.keys())
-    print(f"[DIRK WEEKLY] new SKUs from GraphQL: {len(new_skus)}")
 
-    # - sitemap  sku → url map
-    print("[DIRK WEEKLY] Building sku→url map from sitemap...")
+
+    # -------------------------------------------------------------------
+    # 3. Parse new sitemap
+    # -------------------------------------------------------------------
+    # sku_to_url = {
+    # "111": "abc.com/111",
+    # "222": "abc.com/222"
+    # }
     sku_to_url = build_dirk_url_map()
-
+    
+    # -------------------------------------------------------------------
+    # 4. Set the comparision and make the updates
+    # -------------------------------------------------------------------    
     missing_skus = old_skus - new_skus
     joint_skus = old_skus & new_skus
     add_skus = new_skus - old_skus
 
-    print(f"[DIRK WEEKLY] missing_skus: {len(missing_skus)}")
-    print(f"[DIRK WEEKLY] joint_skus:   {len(joint_skus)}")
-    print(f"[DIRK WEEKLY] add_skus:     {len(add_skus)}")
+    print(f"[Dirk weekly] missing_skus: {len(missing_skus)}")
+    print(f"[Dirk weekly] joint_skus:   {len(joint_skus)}")
+    print(f"[Dirk weekly] add_skus:     {len(add_skus)}")
 
-    rows_to_upsert: List[Dict[str, Any]] = []
+
+    rows_to_upsert = []
 
     # ----------------------------------------------------------------------
-    # 1) missing_skus
+    # 4.1) missing_skus
     # ----------------------------------------------------------------------
     for sku in missing_skus:
         rows_to_upsert.append(
             {
                 "sku": sku,
-                "url": old.get("url"),
                 "availability": False,
-                "current_price": None,
-                "regular_price": None,
-                "valid_from": None,
-                "valid_to": None,
             }
         )
 
     # ----------------------------------------------------------------------
-    # 2) joint_skus:  → daily refresh 逻辑
+    # 4.2) joint_skus:  
     # ----------------------------------------------------------------------
     for sku in joint_skus:
         old = old_by_sku[sku]
@@ -660,7 +623,6 @@ def refresh_dirk_weekly():
 
         row = {
             "sku": sku,
-            "url": old.get("url"),
             "regular_price": new.get("regular_price"),
             "current_price": new.get("current_price"),
             "valid_from": new.get("valid_from"),
@@ -670,21 +632,23 @@ def refresh_dirk_weekly():
         rows_to_upsert.append(row)
 
     # ----------------------------------------------------------------------
-    # 3) add_skus: insert
+    # 4.3) add_skus: insert
     # ----------------------------------------------------------------------
     for sku in add_skus:
         new = new_by_sku[sku]
         url = sku_to_url.get(sku)
         if not url:
-            print(f"[DIRK WEEKLY][WARN] cannot find URL for new sku={sku}, skip.")
-    
+            continue
+        
+        product_name_du = new.get("product_name_du")
+        product_name_en = translate_cached(product_name_du) if product_name_du else None
 
         rows_to_upsert.append(
             {
                 "sku": sku,
                 "url": url,
-                "product_name_du": new.get("product_name_du"),
-                "product_name_en": new.get("product_name_en"),
+                "product_name_du": product_name_du,
+                "product_name_en": product_name_en,
                 "brand": new.get("brand"),
                 "unit_du": new.get("unit_du"),
                 "unit_qty": new.get("unit_qty"),
@@ -698,11 +662,10 @@ def refresh_dirk_weekly():
         )
 
     if not rows_to_upsert:
-        print("[DIRK WEEKLY] nothing to upsert.")
+        print("[Dirk weekly] nothing to upsert.")
         return
 
-    print(f"[DIRK WEEKLY] upserting {len(rows_to_upsert)} rows to Supabase...")
+    print(f"[Dirk weekly] upserting {len(rows_to_upsert)} rows to Supabase...")
 
-    supabase.table("dirk").upsert(rows_to_upsert, on_conflict="sku").execute()
-
-    print("[DIRK WEEKLY] done.")
+    upsert_rows("dirk", rows_to_upsert, conflict_col="sku")
+    print("[Dirk weekly] Done.")
