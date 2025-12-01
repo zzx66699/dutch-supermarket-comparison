@@ -2,8 +2,7 @@ import numpy as np
 import pandas as pd
 
 from ah_core import (
-    build_ah_products_df_via_taxonomies,
-
+    fetch_all_ah_products,
     translate_cached,
     parse_unit,
 
@@ -14,7 +13,7 @@ from supabase_utils import upsert_rows
 if __name__ == "__main__":
 
     # 1. Fetch all the products
-    df = build_ah_products_df_via_taxonomies(page_size=60, max_taxonomies=None) #60 is stable
+    df = pd.DataFrame(fetch_all_ah_products(page_size=60, max_taxonomies=None)) 
     print("rows:", len(df))
 
     # 2. Translate product_name_du → product_name_en
