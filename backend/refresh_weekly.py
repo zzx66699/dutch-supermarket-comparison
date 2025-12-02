@@ -3,14 +3,14 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from hoogvliet_core import refresh_hoogvliet_weekly
 from dirk_core import refresh_dirk_weekly
-# from ah_core import refresh_ah_weekly
+from ah_core import refresh_ah_weekly
 # from jumbo_core import refresh_jumbo_weekly
 
 
 TASKS = {
     "hoogvliet": refresh_hoogvliet_weekly,
     "dirk": refresh_dirk_weekly,
-    # "ah": refresh_ah_weekly,
+    "ah": refresh_ah_weekly,
     # "jumbo": refresh_jumbo_weekly,
 }
 
