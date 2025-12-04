@@ -106,7 +106,7 @@ def handle_normalized(unit_text):
     if unit_type == "l":
         return unit_qty, "l"    
     
-    return unit_qty, "stuk"
+    return unit_qty, "piece"
 
 
 def parse_unit(unit_text: str):
