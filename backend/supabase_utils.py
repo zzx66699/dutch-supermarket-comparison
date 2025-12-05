@@ -73,7 +73,7 @@ def upsert_rows(
     total = len(safe_rows)
 
     for idx, row in enumerate(safe_rows, start=1):
-        url = row.get("url")
+        sku = row.get("sku")
         try:
             q = supabase.table(table_name)
             if conflict_col:
@@ -81,8 +81,8 @@ def upsert_rows(
             else:
                 q = q.upsert(row)  
             q.execute()
-            print(f"[upsert_rows] OK {idx}/{total} url={url}")
+            print(f"[upsert_rows] OK {idx}/{total} sku={sku}")
         except Exception as e:
-            print(f"[upsert_rows] ❌ Skip {idx}/{total} url={url} due to error: {e}")
+            print(f"[upsert_rows] ❌ Skip {idx}/{total} sku={sku} due to error: {e}")
 
     print("[upsert_rows] Done.")
