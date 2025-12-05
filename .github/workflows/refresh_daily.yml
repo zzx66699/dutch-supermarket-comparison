@@ -3,7 +3,7 @@ name: Daily Refresh
 on:
   workflow_dispatch: {}         # allow manual run
   schedule:
-    - cron: "0 3 * * *"
+    - cron: "0 1 */2 * *"
 
 jobs:
   refresh_daily:

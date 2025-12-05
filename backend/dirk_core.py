@@ -165,9 +165,6 @@ def fetch_webgroup_raw(web_group_id: int, store_id: int = DEFAULT_STORE_ID) -> l
             "headerText": "...",
             "packaging": "400 g",
             "image": "...",
-            "department": "...",
-            "webgroup": "...",
-            "brand": "...",
             ...
         }
       }
@@ -389,123 +386,6 @@ def extract_product_id_from_url(url: str) -> int | None:
 # ---------------------------------------------------------------------------
 # Daily refresh
 # ---------------------------------------------------------------------------
-def refresh_dirk_daily():
-    """
-    Daily refresh for Dirk:
-
-    For all URLs in the DB:
-      - Crawl the URL and extract: sku, regular_price, current_price, valid_from, valid_to
-      - If invalid: availability -> False 
-      - If (curr, reg, vf, vt) unchanged -> skip
-      - If changed -> upsert updated fields
-    """
-    # -------------------------------------------------------------------
-    # 1. Fetch data from supabase
-    # -------------------------------------------------------------------
-    supabase = get_supabase()
-    resp = supabase.table("dirk").select(
-        "sku, regular_price, current_price, valid_from, valid_to, availability"
-    ).execute()
-    rows = resp.data or []
-    print(f"[Dirk daily] Found {len(rows)} existing Dirk products in DB.")
-
-
-    # -------------------------------------------------------------------
-    # 2. Fetch new dirk products via GraphQL
-    # -------------------------------------------------------------------
-    # fresh_products = [
-    # {"sku": 111, "current_price": 1.99, "regular_price": 1.99, ...},
-    # {"sku": 222, "current_price": 2.49, "regular_price": 2.99, ...},
-    # {"sku": 333, "current_price": 3.50, "regular_price": 4.00, ...},
-    # ]
-    fresh_products = fetch_all_dirk_products()
-
-    # fresh_by_pid = {
-    # "111": {"sku": 111, "current_price": 1.99, "regular_price": 1.99, ...},
-    # "222": {"sku": 222, "current_price": 2.49, "regular_price": 2.99, ...},
-    # "333": {"sku": 333, "current_price": 3.50, "regular_price": 4.00, ...},
-    # }   
-    fresh_by_pid: Dict[str, Dict[str, Any]] = {
-        str(p["sku"]): p for p in fresh_products if p.get("sku") is not None
-    }
-    
-
-    # -------------------------------------------------------------------
-    # 3. for each sku in supabase table, check if it is still in the fresh. 
-    #    - not in -> unavailable
-    #    - in -> check the price change
-    # -------------------------------------------------------------------
-    updates: List[Dict[str, Any]] = []
-
-    for row in rows:
-        pid = str(row.get("sku"))
-
-        old_cp = normalize_price(row.get("current_price"))
-        old_rp = normalize_price(row.get("regular_price"))
-        old_vf = normalize_date(row.get("valid_from"))
-        old_vt = normalize_date(row.get("valid_to"))
-
-        # fresh = {"sku": 111, "current_price": 1.99, "regular_price": 1.99, ...}
-        fresh = fresh_by_pid.get(pid)
-
-        # -------------------------------------------------------------------
-        # 1)  can't find productId in GraphQL -> unavailable
-        # -------------------------------------------------------------------
-        if fresh is None:
-            if row.get("availability") is not False:
-                updates.append(
-                    {
-                    "sku": pid,     
-                    "availability": False,
-                    }
-                )
-            continue
-        
-        # -------------------------------------------------------------------
-        # 2) no change, skip
-        # -------------------------------------------------------------------
-        new_cp = normalize_price(fresh.get("current_price"))
-        new_rp = normalize_price(fresh.get("regular_price"))
-        new_vf = normalize_date(fresh.get("valid_from"))
-        new_vt = normalize_date(fresh.get("valid_to"))
-
-        if (
-            new_cp == old_cp
-            and new_rp == old_rp
-            and new_vf == old_vf
-            and new_vt == old_vt
-            and row.get("availability") is True
-        ):
-            continue
-
-        # -------------------------------------------------------------------
-        # 3) have change, update
-        # -------------------------------------------------------------------
-        update_row = { 
-            "sku": pid,
-            "current_price": fresh.get("current_price"),
-            "regular_price": fresh.get("regular_price"),
-            "valid_from": fresh.get("valid_from"),
-            "valid_to": fresh.get("valid_to"),
-            "availability": True,
-        }
-
-        updates.append(update_row)
-
-    if not updates:
-        print("[Dirk daily] No Dirk rows changed; nothing to update.")
-        return
-
-    print(f"[Dirk daily] Upserting {len(updates)} updated Dirk rows to Supabase...")
-
-    upsert_rows("dirk", updates, conflict_col="sku")
-
-    print("[Dirk daily] Done.")
-
-     
-# ---------------------------------------------------------------------------
-# Weekly refresh
-# ---------------------------------------------------------------------------
 def build_dirk_url_map() -> Dict[str, str]:
     """
     sku: url dic
@@ -522,12 +402,12 @@ def build_dirk_url_map() -> Dict[str, str]:
         if sku_str not in sku_to_url:
             sku_to_url[sku_str] = url
 
-    print(f"[Dirk weekly] built url map for {len(sku_to_url)} SKUs from sitemap")
+    print(f"[Dirk daily] built url map for {len(sku_to_url)} SKUs from sitemap")
 
     return sku_to_url
 
 
-def refresh_dirk_weekly():
+def refresh_dirk_daily():
     """
     1. Use GraphQL to parse all products → new_by_sku
     2. Supabase DB → old_by_sku
@@ -548,7 +428,7 @@ def refresh_dirk_weekly():
     old_rows = resp.data or []
     old_by_sku = {str(r["sku"]): r for r in old_rows if r.get("sku")}
     old_skus = set(old_by_sku.keys())
-    print(f"[Dirk weekly] Found {len(old_skus)} existing dirk products in DB.")
+    print(f"[Dirk daily] Found {len(old_skus)} existing dirk products in DB.")
 
 
     # -------------------------------------------------------------------
@@ -577,9 +457,9 @@ def refresh_dirk_weekly():
     joint_skus = old_skus & new_skus
     add_skus = new_skus - old_skus
 
-    print(f"[Dirk weekly] missing_skus: {len(missing_skus)}")
-    print(f"[Dirk weekly] joint_skus:   {len(joint_skus)}")
-    print(f"[Dirk weekly] add_skus:     {len(add_skus)}")
+    print(f"[Dirk daily] missing_skus: {len(missing_skus)}")
+    print(f"[Dirk daily] joint_skus:   {len(joint_skus)}")
+    print(f"[Dirk daily] add_skus:     {len(add_skus)}")
 
 
     rows_to_upsert = []
@@ -662,10 +542,10 @@ def refresh_dirk_weekly():
         )
 
     if not rows_to_upsert:
-        print("[Dirk weekly] nothing to upsert.")
+        print("[Dirk daily] nothing to upsert.")
         return
 
-    print(f"[Dirk weekly] upserting {len(rows_to_upsert)} rows to Supabase...")
+    print(f"[Dirk daily] upserting {len(rows_to_upsert)} rows to Supabase...")
 
     upsert_rows("dirk", rows_to_upsert, conflict_col="sku")
-    print("[Dirk weekly] Done.")
+    print("[Dirk daily] Done.")

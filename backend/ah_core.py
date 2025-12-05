@@ -20,6 +20,7 @@ import requests
 import pandas as pd
 from datetime import datetime, date
 from typing import Dict, Any, List, Set
+
 # ---------------------------------------------------------------------------
 # Translation
 # ---------------------------------------------------------------------------
@@ -475,114 +476,8 @@ def fetch_all_ah_products(
 # ---------------------------------------------------------------------------
 # Daily refresh for AH
 # ---------------------------------------------------------------------------
-
 def refresh_ah_daily():
     """
-    Daily refresh for AH:
-
-    For all SKUs in the DB:
-      - Fetch fresh AH products via API (taxonomy-based)
-      - For each existing SKU:
-          - If missing in fresh data -> availability = False
-          - If (curr, reg, vf, vt) unchanged and availability is True -> skip
-          - Else -> update price / promo period and set availability = True
-    NOTE:
-      - Does NOT insert brand-new SKUs (those only in fresh, not in DB).
-        New products are handled in the weekly refresh.
-    """
-    # -------------------------------------------------------------------
-    # 1. Fetch existing rows from Supabase
-    # -------------------------------------------------------------------
-    supabase = get_supabase()
-    resp = supabase.table("ah").select(
-        "sku, regular_price, current_price, valid_from, valid_to, availability"
-    ).execute()
-    rows = resp.data or []
-    print(f"[AH daily] Found {len(rows)} existing AH products in DB.")
-
-
-    # -------------------------------------------------------------------
-    # 2. Fetch fresh AH products via API
-    # -------------------------------------------------------------------
-    fresh_products = fetch_all_ah_products()
-    fresh_by_sku = {
-        str(p["sku"]): p for p in fresh_products if p.get("sku") is not None
-    }
-    print(f"[AH daily] Fetched {len(fresh_by_sku)} fresh AH products from API.")
-
-
-    # -------------------------------------------------------------------
-    # 3. Compare and build updates
-    # -------------------------------------------------------------------
-    updates: List[Dict[str, Any]] = []
-
-    for row in rows:
-        sku = str(row.get("sku"))
-
-        old_cp = normalize_price(row.get("current_price"))
-        old_rp = normalize_price(row.get("regular_price"))
-        old_vf = normalize_date(row.get("valid_from"))
-        old_vt = normalize_date(row.get("valid_to"))
-
-        fresh = fresh_by_sku.get(sku)
-
-        # 1) can't find sku in fresh  -> unavailable
-        if fresh is None:
-            if row.get("availability") is not False:
-                updates.append(
-                    {
-                        "sku": sku,
-                        "availability": False,
-                    }
-                )
-            continue
-
-        # 2)  no change -> skip
-        new_cp = normalize_price(fresh.get("current_price"))
-        new_rp = normalize_price(fresh.get("regular_price"))
-        new_vf = normalize_date(fresh.get("valid_from"))
-        new_vt = normalize_date(fresh.get("valid_to"))
-
-        if (
-            new_cp == old_cp
-            and new_rp == old_rp
-            and new_vf == old_vf
-            and new_vt == old_vt
-            and row.get("availability") is True
-        ):
-            continue
-
-        # 3) change -> update
-        update_row = {
-            "sku": sku,
-            "current_price": fresh.get("current_price"),
-            "regular_price": fresh.get("regular_price"),
-            "valid_from": fresh.get("valid_from"),
-            "valid_to": fresh.get("valid_to"),
-            "availability": True,
-        }
-        updates.append(update_row)
-
-    if not updates:
-        print("[AH daily] No AH rows changed; nothing to update.")
-        return
-
-    print(f"[AH daily] Upserting {len(updates)} updated AH rows to Supabase...")
-
-    upsert_rows("ah", updates, conflict_col="sku")
-
-    print("[AH daily] Done.")
-
-
-
-# ---------------------------------------------------------------------------
-# Weekly refresh for AH
-# ---------------------------------------------------------------------------
-
-def refresh_ah_weekly():
-    """
-    Weekly refresh for AH:
-
     1. Fetch all existing AH products from Supabase -> old_by_sku
     2. Fetch all fresh AH products via API -> new_by_sku
     3. missing_skus = old_skus - new_skus
@@ -605,7 +500,7 @@ def refresh_ah_weekly():
         str(r["sku"]): r for r in old_rows if r.get("sku") is not None
     }
     old_skus = set(old_by_sku.keys())
-    print(f"[AH weekly] Found {len(old_skus)} existing AH products in DB.")
+    print(f"[AH daily] Found {len(old_skus)} existing AH products in DB.")
 
     # -------------------------------------------------------------------
     # 2. Fetch fresh AH products via API
@@ -615,7 +510,7 @@ def refresh_ah_weekly():
         str(p["sku"]): p for p in fresh_products if p.get("sku") is not None
     }
     new_skus = set(new_by_sku.keys())
-    print(f"[AH weekly] Fetched {len(new_skus)} fresh AH products from API.")
+    print(f"[AH daily] Fetched {len(new_skus)} fresh AH products from API.")
 
     # -------------------------------------------------------------------
     # 3. Set comparisons
@@ -624,9 +519,9 @@ def refresh_ah_weekly():
     joint_skus = old_skus & new_skus
     add_skus = new_skus - old_skus
 
-    print(f"[AH weekly] missing_skus: {len(missing_skus)}")
-    print(f"[AH weekly] joint_skus:   {len(joint_skus)}")
-    print(f"[AH weekly] add_skus:     {len(add_skus)}")
+    print(f"[AH daily] missing_skus: {len(missing_skus)}")
+    print(f"[AH daily] joint_skus:   {len(joint_skus)}")
+    print(f"[AH daily] add_skus:     {len(add_skus)}")
 
     rows_to_upsert: List[Dict[str, Any]] = []
 
@@ -705,12 +600,10 @@ def refresh_ah_weekly():
         )
 
     if not rows_to_upsert:
-        print("[AH weekly] nothing to upsert.")
+        print("[AH daily] nothing to upsert.")
         return
 
-    print(f"[AH weekly] upserting {len(rows_to_upsert)} rows to Supabase...")
+    print(f"[AH daily] upserting {len(rows_to_upsert)} rows to Supabase...")
 
     upsert_rows("ah", rows_to_upsert, conflict_col="sku")
-    print("[AH weekly] Done.")
-
-
+    print("[AH daily] Done.")

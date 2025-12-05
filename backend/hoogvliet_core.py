@@ -247,7 +247,7 @@ def fetch_category_items(tn_cid: str, page_size: int = 16):
             "t": "json",
         }
 
-        r = requests.get(SEARCH_URL, headers=HEADERS, params=params, timeout=10)
+        r = requests.get(SEARCH_URL, headers=HEADERS, params=params, timeout=30)
         r.raise_for_status()
 
         # "data:" {
@@ -549,143 +549,6 @@ def build_price_map_for_skus(all_skus, batch_size: int = 80):
 
 def refresh_hoogvliet_daily():
     """
-    Daily refresh the price and sale period for exsiting URL
-      - Get the data from Supabase 
-      - Using Intershop API to regular_price / current_price
-        - If regular_price is None -> availabilty = False
-        - If regular_price and current_price are unchanged -> skip
-        - regular_price and current_price change 
-            - If regular_price = current_price -> valid_to & valid_from = Null
-            - If regular_price != current_pricecrawl, crawling HTML to update valid_from / valid_to
-        """
-    # -------------------------------------------------------------------
-    # 1. Fetch data from supabase 
-    # -------------------------------------------------------------------
-    supabase = get_supabase()
-    resp = supabase.table("hoogvliet").select(
-        "url, sku, regular_price, current_price, availability, valid_from, valid_to"
-    ).execute()
-    # rows = [
-    #     {
-    #         "url": "https://hoogvliet.com/product/a",
-    #         "sku": "98728000",
-    #         "regular_price": 1.99,
-    #         "current_price": 1.49,
-    #         "availability": True,
-    #         "valid_from": "2025-02-01",
-    #         "valid_to": "2025-02-07",
-    #     },
-    #     {
-    #         "url": "https://hoogvliet.com/product/b",
-    #         "sku": "12345000",
-    #         "regular_price": 2.49,
-    #         "current_price": 2.49,
-    #         "availability": True,
-    #         "valid_from": None,
-    #         "valid_to": None,
-    #     },
-    # ]
-    rows = resp.data or []
-    print(f"[Hoogvliet daily] found {len(rows)} existing Hoogvliet products in DB")
-
-
-    # -------------------------------------------------------------------
-    # 2. Use Intershop API to get fresh prices for *these* SKUs
-    # -------------------------------------------------------------------
-    all_skus = [str(r["sku"]) for r in rows if r.get("sku") is not None]
-    # price_map = {
-    # "111": {"regular_price":1, "current_price":0.5},
-    # "222":{"regular_price":1, "current_price":0.5}
-    # }
-    price_map = build_price_map_for_skus(all_skus)   
-    
-
-    # -------------------------------------------------------------------
-    # 3. Compare old vs new, decide updates
-    # -------------------------------------------------------------------
-    updates = []
-
-    for row in rows:
-        url = row.get("url")
-        sku = str(row.get("sku"))
-
-        old_cp = normalize_price(row.get("current_price"))
-        old_rp = normalize_price(row.get("regular_price"))
-        old_vf = normalize_date(row.get("valid_from"))
-        old_vt = normalize_date(row.get("valid_to"))
-
-        price_info = price_map.get(sku)
-
-        # -------------------------------------------------------------------
-        # 1) product is invalid
-        # -------------------------------------------------------------------
-        if (not price_info) or (price_info.get("regular_price") is None):
-            updates.append(
-                {
-                    "sku": sku,
-                    "availability": False,
-                }
-            )
-            continue
-        
-        # -------------------------------------------------------------------
-        # 2) No change, skip
-        # -------------------------------------------------------------------
-        
-        new_cp = normalize_price(price_info.get("current_price"))
-        new_rp = normalize_price(price_info.get("regular_price"))
-
-        vf_raw = None
-        vt_raw = None
-
-        if new_cp != new_rp:
-            fresh_time = parse_product_page(url) or {}
-            vf_raw = fresh_time.get("valid_from")
-            vt_raw = fresh_time.get("valid_to")
-
-        new_vf = normalize_date(vf_raw)
-        new_vt = normalize_date(vt_raw)
-
-        if (
-            new_cp == old_cp
-            and new_rp == old_rp
-            and new_vf == old_vf
-            and new_vt == old_vt
-            and row.get("availability") is True
-        ):
-            continue
-        
-        # -------------------------------------------------------------------
-        # 3) have change, update
-        # -------------------------------------------------------------------
-        update_row = { 
-            "sku": sku,
-            "current_price": price_info.get("current_price"),
-            "regular_price": price_info.get("regular_price"),
-            "valid_from": new_vf,
-            "valid_to": new_vt,
-            "availability": True,
-        }
-
-        updates.append(update_row)
-
-
-    if not updates:
-        print("[Hoogvliet daily] nothing changed, skip upsert.")
-        return
-
-    print(f"[Hoogvliet daily] Upserting {len(updates)} hoogvliet rows to supabase.")
-
-    upsert_rows("hoogvliet", updates, conflict_col="sku")
-
-    print("[Hoogvliet daily] Done.")
-
-
-# ---------------------------------------------------------------------------
-# Weekly refresh
-# ---------------------------------------------------------------------------
-def refresh_hoogvliet_weekly():
-    """
     - Fetch full snapshot from Tweakwise + Intershop APIs -> new_products[]
     - Load all existing rows from Supabase -> old_rows[]
     - Compare SKU sets:
@@ -703,7 +566,7 @@ def refresh_hoogvliet_weekly():
     old_rows = resp.data or []
     old_by_sku = {str(r["sku"]): r for r in old_rows if r.get("sku")}
     old_skus = set(old_by_sku.keys())
-    print(f"[Hoogvliet weekly] Found {len(old_skus)} existing Hoogvliet products in DB.")
+    print(f"[hoogvliet daily] Found {len(old_skus)} existing Hoogvliet products in DB.")
 
 
     # -------------------------------------------------------------------
@@ -721,9 +584,9 @@ def refresh_hoogvliet_weekly():
     add_skus     = new_skus - old_skus
     joint_skus   = old_skus & new_skus
 
-    print(f"[Hoogvliet weekly] missing_skus: {len(missing_skus)}")
-    print(f"[Hoogvliet weekly] joint_skus:   {len(joint_skus)}")
-    print(f"[Hoogvliet weekly] add_skus:     {len(add_skus)}")
+    print(f"[hoogvliet daily] missing_skus: {len(missing_skus)}")
+    print(f"[hoogvliet daily] joint_skus:   {len(joint_skus)}")
+    print(f"[hoogvliet daily] add_skus:     {len(add_skus)}")
 
     rows_to_upsert = []
 
@@ -828,11 +691,11 @@ def refresh_hoogvliet_weekly():
     # 4) Upsert to DB
     # ----------------------------------------------------------------------
     if not rows_to_upsert:
-        print("[Hoogvliet weekly] nothing to upsert.")
+        print("[hoogvliet daily] nothing to upsert.")
         return
 
-    print(f"[Hoogvliet weekly] upserting {len(rows_to_upsert)} rows to Supabase...")
+    print(f"[hoogvliet daily] upserting {len(rows_to_upsert)} rows to Supabase...")
     
     upsert_rows("hoogvliet", rows_to_upsert, conflict_col="sku")
 
-    print("[Hoogvliet weekly] Done.")
+    print("[hoogvliet daily] Done.")
