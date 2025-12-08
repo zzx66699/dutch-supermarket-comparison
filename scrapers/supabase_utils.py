@@ -6,9 +6,6 @@ import pandas as pd
 import numpy as np
 from supabase import create_client
 
-import time
-import httpx
-
 
 
 def get_supabase():

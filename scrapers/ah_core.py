@@ -6,11 +6,8 @@ from datetime import date
 
 import pandas as pd
 import requests
-from bs4 import BeautifulSoup
 from deep_translator import GoogleTranslator
-from urllib.parse import urlparse
 from datetime import date, datetime
-import xml.etree.ElementTree as ET
 
 from supabase_utils import get_supabase, upsert_rows
 from typing import List, Dict, Any
