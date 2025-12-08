@@ -4,8 +4,9 @@ import numpy as np
 import json
 
 from supabase_utils import get_supabase
+import os
 
-HF_SPACE_URL = "https://zzx990907-dutch-supermarket-price-comparison.hf.space/embed"
+HF_SPACE_URL = os.getenv("HF_EMBEDDING_URL")
 
 
 # -----------------------------
