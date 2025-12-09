@@ -80,7 +80,8 @@ def search_one_product(
         v = parse_embedding(emb)
         if v is None:
             continue
-
+        
+        # compute similarity using a simple math operation:
         sim = float(np.dot(q_vec, v))
 
         new_r = dict(r)
