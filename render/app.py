@@ -3,8 +3,18 @@ from pydantic import BaseModel
 from typing import List
 
 from search_logic import search_one_product
+from fastapi.middleware.cors import CORSMiddleware
+
 
 app = FastAPI()
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],        # CORS
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 class SearchRequest(BaseModel):
     queries: List[str]
