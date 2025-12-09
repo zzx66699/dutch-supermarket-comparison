@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 
-const BACKEND_URL = "https://dutch-supermarket-comparison.onrender.com"; 
+const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL!; 
 
 export default function HomePage() {
   const [productText, setProductText] = useState("");
