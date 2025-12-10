@@ -1,26 +1,31 @@
+/* frontend/app/globals.css */
+@import url("https://fonts.googleapis.com/css2?family=Playfair+Display:wght@500;600;700&display=swap"); 
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
+
+
+@theme {
+  --color-ivory: #fff9e2;
+  --color-clay: #dca278;
+  --color-eucalyptus: #cdd4b1;
+  --color-shell: #ECF0F2;
+  --font-heading: -apple-system, BlinkMacSystemFont, "SF Pro Display", sans-serif;
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
-}
-
+html,
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  margin: 0;
+  padding: 0;
+  background:
+    radial-gradient(
+      circle at 30% 20%,
+      rgba(255, 255, 255, 0.6),
+      rgba(240, 243, 247, 0.4)
+    ),
+    linear-gradient(
+      180deg,
+      #eef1f4 0%,
+      #e3e7eb 100%
+    );
 }
+

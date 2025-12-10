@@ -15,14 +15,6 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body>
-        <header className="p-4 border-b mb-6 flex gap-4">
-          <Link href="/compare" className="text-blue-600 hover:underline">
-            Compare
-          </Link>
-          <Link href="/promotions" className="text-blue-600 hover:underline">
-            Promotions
-          </Link>
-        </header>
 
         <main>{children}</main>
       </body>

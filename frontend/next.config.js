@@ -3,4 +3,12 @@ const nextConfig = {
   // config options here
 };
 
+module.exports = {
+  images: {
+    domains: [
+      "upload.wikimedia.org"
+    ],
+  },
+};
+
 module.exports = nextConfig;
