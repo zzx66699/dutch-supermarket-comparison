@@ -96,7 +96,7 @@ export default function HomePage() {
     - pb-: Bottom Padding. 
     - pt-: Top Padding 
     - space-y-: Vertical Space Between Children. */
-    <main className="max-w-6xl mx-auto px-6 pb-10 pt-15 space-y-3">
+    <main className="max-w-6xl mx-auto px-6 pb-10 pt-20 space-y-3">
 
       {/* Page Title */}
       <h1 className="font-heading text-3xl md:text-5xl font-semibold text-center mb-10">

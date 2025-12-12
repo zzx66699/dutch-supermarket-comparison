@@ -1,21 +1,29 @@
 /* frontend/app/globals.css */
-@import url("https://fonts.googleapis.com/css2?family=Playfair+Display:wght@500;600;700&display=swap"); 
-@import "tailwindcss";
 
+/* Google Font (for serif titles like your H1) */
+@import url("https://fonts.googleapis.com/css2?family=Playfair+Display:wght@500;600;700&display=swap");
 
+/* Tailwind v3 directives */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
 
-@theme {
-  --color-ivory: #fff9e2;
-  --color-clay: #dca278;
-  --color-eucalyptus: #cdd4b1;
+/* CSS variables (Tailwind v3 compatible) */
+:root {
   --color-shell: #ECF0F2;
-  --font-heading: -apple-system, BlinkMacSystemFont, "SF Pro Display", sans-serif;
+
+  /* Apple-like system font stack for UI */
+  --font-heading: -apple-system, BlinkMacSystemFont, "SF Pro Display",
+    "SF Pro Text", system-ui, -apple-system, sans-serif;
 }
 
+/* Global base styles */
 html,
 body {
   margin: 0;
   padding: 0;
+
+  /* Your glassy / Apple-like background */
   background:
     radial-gradient(
       circle at 30% 20%,
@@ -27,5 +35,7 @@ body {
       #eef1f4 0%,
       #e3e7eb 100%
     );
-}
 
+  color: #111827; /* neutral dark text */
+  font-family: var(--font-heading);
+}
